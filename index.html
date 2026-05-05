@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VéloRoute - Moteur Ultra Optimisé</title>
+    <title>VéloRoute - Moteur Front-End Blindé</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -22,14 +22,14 @@
             </div>
             <div>
                 <h1 class="font-black italic text-xl tracking-tighter">VÉLO<span class="text-emerald-500">CORE</span></h1>
-                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Int32 Array Engine</p>
+                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Crash-Proof Engine</p>
             </div>
         </div>
 
         <div class="flex gap-3">
             <select id="deptSelect" class="bg-slate-800 text-sm border border-slate-700 rounded-md px-4 py-2 outline-none focus:border-emerald-500 text-slate-200">
-                <option value="large">Grande Zone (Multidépartementale)</option>
-                <option value="paris">Paris & Petite Couronne</option>
+                <option value="large">Gironde (Multi-départements)</option>
+                <option value="paris">Paris & Île-de-France</option>
                 <option value="lyon">Lyon & Environs</option>
             </select>
             <button id="loadBtn" class="bg-emerald-600 hover:bg-emerald-500 font-bold px-6 py-2 rounded-md transition-all active:scale-95 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
@@ -41,8 +41,8 @@
     <main class="relative">
         <div id="map"></div>
 
-        <!-- Indicateur de chargement / Status -->
-        <div id="statusBox" class="hidden absolute top-4 left-4 z-[1000] hud-panel p-4 rounded-xl shadow-2xl w-72">
+        <!-- Interface de statuts (Remplaçant les alertes bloquantes) -->
+        <div id="statusBox" class="hidden absolute top-4 left-4 z-[1000] hud-panel p-4 rounded-xl shadow-2xl w-80">
             <div class="flex items-center gap-3 mb-2">
                 <div id="loader" class="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
                 <span id="statusLabel" class="text-sm font-bold text-white">Traitement...</span>
@@ -50,11 +50,11 @@
             <div class="w-full bg-slate-800 h-1 mt-2 rounded-full overflow-hidden">
                 <div id="progressBar" class="bg-emerald-500 h-full w-0 transition-all duration-300"></div>
             </div>
-            <p id="statsDetail" class="text-[10px] text-slate-400 font-mono mt-2"></p>
+            <p id="statsDetail" class="text-[11px] text-slate-300 mt-2 leading-relaxed"></p>
         </div>
 
         <!-- Résultat Itinéraire -->
-        <div id="routeInfo" class="hidden absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] hud-panel p-5 rounded-2xl shadow-2xl flex items-center gap-8">
+        <div id="routeInfo" class="hidden absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] hud-panel p-5 rounded-2xl shadow-2xl flex items-center gap-8 border border-emerald-900/50">
             <div>
                 <p class="text-[10px] text-slate-400 font-bold uppercase">Distance</p>
                 <p class="text-2xl font-black text-emerald-400"><span id="txtDist">0</span> <span class="text-sm font-normal text-slate-300">km</span></p>
@@ -64,32 +64,32 @@
                 <p class="text-[10px] text-slate-400 font-bold uppercase">Temps de calcul</p>
                 <p class="text-2xl font-black text-white"><span id="txtTime">0</span> <span class="text-sm font-normal text-slate-300">ms</span></p>
             </div>
-            <button onclick="resetApp()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4">
+            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4">
                 <svg class="w-5 h-5 fill-slate-300" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
         </div>
     </main>
 
     <script>
-        // --- LE MOTEUR WORKER "CRASH-PROOF" ---
+        // --- LE MOTEUR WORKER TOTALEMENT REVU ---
         const workerBlob = new Blob([`
-            // Structure de données optimisée : Tableaux parallèles basés sur des ID (Entiers)
             let nodesLon = [];
             let nodesLat = [];
-            let adj = []; // adj[nodeId] = [targetId1, weight1, realDist1, targetId2, weight2, realDist2, ...]
+            let adj = []; 
             let totalNodes = 0;
 
-            // Lazy Min-Heap ultra-rapide (pas de mise à jour, on empile juste et on ignore les vieux)
-            class LazyMinHeap {
-                constructor(maxSize) {
-                    this.data = new Float32Array(maxSize * 2); // [id1, dist1, id2, dist2...]
-                    this.size = 0;
+            // Heap dynamique infinie : Ne crashera JAMAIS peu importe la densité du graphe
+            class DynamicLazyHeap {
+                constructor() {
+                    this.data = []; // Utilisation d'un Array JS plat (très performant en V8)
                 }
                 push(id, dist) {
-                    let i = this.size++;
+                    let i = this.data.length / 2;
+                    this.data.push(id, dist);
                     while (i > 0) {
                         let p = (i - 1) >> 1;
                         if (this.data[p * 2 + 1] <= dist) break;
+                        
                         this.data[i * 2] = this.data[p * 2];
                         this.data[i * 2 + 1] = this.data[p * 2 + 1];
                         i = p;
@@ -98,20 +98,26 @@
                     this.data[i * 2 + 1] = dist;
                 }
                 pop() {
-                    if (this.size === 0) return null;
+                    const len = this.data.length;
+                    if (len === 0) return null;
+                    
                     const topId = this.data[0];
                     const topDist = this.data[1];
-                    const botId = this.data[(this.size - 1) * 2];
-                    const botDist = this.data[(this.size - 1) * 2 + 1];
-                    this.size--;
                     
-                    if (this.size > 0) {
+                    const botDist = this.data.pop();
+                    const botId = this.data.pop();
+                    
+                    const size = this.data.length / 2;
+                    if (size > 0) {
                         let i = 0;
-                        while ((i * 2) + 1 < this.size) {
+                        while ((i * 2) + 1 < size) {
                             let left = (i * 2) + 1;
                             let right = left + 1;
                             let smallest = left;
-                            if (right < this.size && this.data[right * 2 + 1] < this.data[left * 2 + 1]) smallest = right;
+                            
+                            if (right < size && this.data[right * 2 + 1] < this.data[left * 2 + 1]) {
+                                smallest = right;
+                            }
                             if (this.data[smallest * 2 + 1] >= botDist) break;
                             
                             this.data[i * 2] = this.data[smallest * 2];
@@ -123,20 +129,20 @@
                     }
                     return { id: topId, dist: topDist };
                 }
+                get size() { return this.data.length / 2; }
             }
 
             self.onmessage = function(e) {
                 const { type, data } = e.data;
 
                 if (type === 'BUILD') {
-                    // Reset total pour libérer la RAM entre les chargements
+                    // Force le nettoyage total de la RAM pour pouvoir enchainer les départements
                     nodesLon = []; nodesLat = []; adj = [];
                     let coordToId = new Map();
                     let idCounter = 0;
 
                     const elements = data.elements;
                     
-                    // Fonction locale pour parser rapidement
                     function getId(lon, lat) {
                         const key = lon.toFixed(5) + ',' + lat.toFixed(5);
                         let id = coordToId.get(key);
@@ -145,7 +151,7 @@
                             coordToId.set(key, id);
                             nodesLon.push(lon);
                             nodesLat.push(lat);
-                            adj.push([]); // Initialisation de la liste d'adjacence pour cet ID
+                            adj.push([]); 
                         }
                         return id;
                     }
@@ -154,9 +160,10 @@
                         if (way.type === 'way') {
                             const hw = way.tags.highway;
                             let penalty = 1.0;
+                            // Profil vélo
                             if (hw === 'primary' || hw === 'secondary') penalty = 3.0;
                             else if (hw === 'cycleway') penalty = 0.5;
-                            else if (hw === 'motorway' || hw === 'trunk') return;
+                            else if (hw === 'motorway' || hw === 'trunk') return; // Exclu
 
                             const pts = way.geometry;
                             for (let i = 0; i < pts.length - 1; i++) {
@@ -166,7 +173,6 @@
                                 
                                 const weight = dist * penalty;
                                 
-                                // On stocke en tableau plat : [target, weight, realDist]
                                 adj[u].push(v, weight, dist);
                                 adj[v].push(u, weight, dist);
                             }
@@ -174,7 +180,7 @@
                     });
 
                     totalNodes = idCounter;
-                    coordToId.clear(); // CRUCIAL : On détruit la Map pour libérer massivement la RAM
+                    coordToId.clear(); // IMPORTANT: détruit la Map pour libérer la RAM
                     coordToId = null; 
 
                     self.postMessage({ type: 'READY', nodes: totalNodes });
@@ -191,12 +197,11 @@
                 const dLat = (la2 - la1) * Math.PI / 180;
                 const dLon = (lo2 - lo1) * Math.PI / 180;
                 const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
-                return 12742 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                return 12742 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); // 12742 = 2 * 6371 (Rayon terre)
             }
 
             function findNearestId(lon, lat) {
                 let min = Infinity, bestId = -1;
-                // Boucle ultra-rapide sur des tableaux typés/contigus
                 for (let i = 0; i < totalNodes; i++) {
                     const d = (nodesLon[i] - lon)**2 + (nodesLat[i] - lat)**2;
                     if (d < min) { min = d; bestId = i; }
@@ -208,14 +213,13 @@
                 const startId = findNearestId(sObj.lng, sObj.lat);
                 const endId = findNearestId(eObj.lng, eObj.lat);
                 
-                // Utilisation de Typed Arrays pour les calculs d'état (Zéro crash mémoire)
                 const dists = new Float64Array(totalNodes);
                 dists.fill(Infinity);
                 const prevNode = new Int32Array(totalNodes);
                 prevNode.fill(-1);
                 const prevDist = new Float32Array(totalNodes);
 
-                const pq = new LazyMinHeap(totalNodes * 4); 
+                const pq = new DynamicLazyHeap(); 
 
                 dists[startId] = 0;
                 pq.push(startId, 0);
@@ -226,12 +230,9 @@
                     const d = top.dist;
 
                     if (curr === endId) break;
-                    
-                    // Lazy deletion : si on a déjà trouvé un meilleur chemin avant, on l'ignore
                     if (d > dists[curr]) continue;
 
                     const neighbors = adj[curr];
-                    // neighbors est [id1, weight1, real1, id2, weight2, real2...]
                     for (let i = 0; i < neighbors.length; i += 3) {
                         const target = neighbors[i];
                         const weight = neighbors[i+1];
@@ -247,14 +248,13 @@
                     }
                 }
 
-                // Reconstruction du chemin
+                if (prevNode[endId] === -1 && startId !== endId) {
+                    return { coords: [], totalDist: 0 }; // Graphe déconnecté
+                }
+
                 const coords = [];
                 let curr = endId;
                 let totalDist = 0;
-
-                if (prevNode[endId] === -1 && startId !== endId) {
-                    return { coords: [], totalDist: 0 }; // Pas de chemin
-                }
 
                 while (curr !== -1) {
                     coords.push([nodesLat[curr], nodesLon[curr]]);
@@ -284,33 +284,34 @@
                 const { type, nodes, path, time } = e.data;
                 if (type === 'READY') {
                     isReady = true;
-                    updateStatus('Moteur prêt à calculer', false, 100);
-                    document.getElementById('statsDetail').innerHTML = `Généré avec succès.<br><span class="text-emerald-400">${nodes.toLocaleString()}</span> nœuds indexés.`;
-                    setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 4000);
+                    updateStatus('Moteur opérationnel', false, 100);
+                    document.getElementById('statsDetail').innerHTML = `Graphe compilé : <span class="text-emerald-400 font-bold">${nodes.toLocaleString()}</span> carrefours prêts pour le routage.`;
+                    setTimeout(() => { if(isReady) document.getElementById('statusBox').classList.add('hidden'); }, 3000);
                 } else if (type === 'RESULT') {
-                    updateStatus('Terminé', false, 100);
-                    setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 500);
                     showRoute(path, time);
                 }
             };
         };
 
         async function loadData() {
+            resetFull(); // Nettoie totalement la carte avant de changer de région
+            
             const boundsMap = {
-                "large": [44.7, -0.8, 45.3, 0.2], // Grande zone Gironde
+                "large": [44.7, -0.8, 45.3, 0.2],
                 "paris": [48.75, 2.15, 48.95, 2.45],
                 "lyon": [45.65, 4.70, 45.85, 4.95]
             };
             const code = document.getElementById('deptSelect').value;
             const b = boundsMap[code];
 
-            updateStatus('Téléchargement des routes...', true, 20);
+            updateStatus('Acquisition des données...', true, 20);
+            document.getElementById('statsDetail').innerText = "Téléchargement d'OpenStreetMap (peut prendre 10 à 30 secondes...)";
             map.fitBounds([[b[0], b[1]], [b[2], b[3]]]);
             isReady = false;
 
-            // Filtre strict : un réseau dense prend beaucoup de données, on filtre pour la fluidité réseau
+            // Filtre élargi pour inclure les zones piétonnes, chemins de terre et liaisons secondaires pour éviter les "trous"
             const query = `[out:json][timeout:90];
-                way["highway"~"primary|secondary|tertiary|residential|cycleway|path"](${b[0]},${b[1]},${b[2]},${b[3]});
+                way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|pedestrian|track"](${b[0]},${b[1]},${b[2]},${b[3]});
                 out geom;`;
             
             try {
@@ -321,12 +322,12 @@
                 if(!res.ok) throw new Error("Overpass API Surchargée");
                 const data = await res.json();
                 
-                updateStatus('Compilation Int32 en cours...', true, 60);
-                document.getElementById('statsDetail').innerText = "Destruction du JSON et allocation mémoire RAM...";
+                updateStatus('Construction du graphe...', true, 70);
+                document.getElementById('statsDetail').innerText = "Analyse des connexions et indexation en mémoire RAM...";
                 worker.postMessage({ type: 'BUILD', data });
             } catch (err) {
-                alert("Erreur réseau : La zone est trop grande ou l'API Overpass vous a bloqué temporairement.");
-                document.getElementById('statusBox').classList.add('hidden');
+                updateStatus('Erreur Réseau', false, 0);
+                document.getElementById('statsDetail').innerHTML = "<span class='text-red-400'>La zone est trop grande ou le serveur d'API est saturé. Réessayez.</span>";
             }
         }
 
@@ -340,10 +341,11 @@
                 points.end = e.latlng;
                 endMarker = L.circleMarker(e.latlng, { color: '#ef4444', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
                 
-                updateStatus('Dijkstra (Int32 Array)...', true, 80);
+                updateStatus('Calcul Dijkstra en cours...', true, 80);
+                document.getElementById('statsDetail').innerText = "Recherche du meilleur itinéraire...";
                 worker.postMessage({ type: 'ROUTE', data: { start: points.start, end: points.end } });
             } else {
-                resetApp();
+                resetPoints();
                 handleMapClick(e);
             }
         }
@@ -351,10 +353,19 @@
         function showRoute(path, time) {
             if (routeLayer) map.removeLayer(routeLayer);
             
-            if (!path || path.coords.length < 2) {
-                resetApp();
-                return alert("Chemin impossible. Ces deux points ne sont pas reliés par le réseau routier vélo !");
+            // Gestion propre des erreurs de graphe déconnecté (plus d'alerte bloquante !)
+            if (!path || path.coords.length === 0) {
+                resetPoints();
+                updateStatus('Calcul Échoué', false, 0);
+                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Chemin impossible.</span> Ces deux points ne sont pas reliés par des routes carrossables/cyclables dans les données chargées.';
+                setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 5000);
+                return;
             }
+
+            // Gestion du succès cohérente
+            updateStatus('Itinéraire trouvé !', false, 100);
+            document.getElementById('statsDetail').innerText = `Calcul effectué avec succès.`;
+            setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 2000);
 
             routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 5, opacity: 1, lineJoin: 'round' }).addTo(map);
             document.getElementById('routeInfo').classList.remove('hidden');
@@ -362,12 +373,17 @@
             document.getElementById('txtTime').innerText = time;
         }
 
-        function resetApp() {
+        function resetPoints() {
             points = { start: null, end: null };
             if (startMarker) map.removeLayer(startMarker);
             if (endMarker) map.removeLayer(endMarker);
             if (routeLayer) map.removeLayer(routeLayer);
             document.getElementById('routeInfo').classList.add('hidden');
+        }
+
+        function resetFull() {
+            resetPoints();
+            document.getElementById('statusBox').classList.add('hidden');
         }
 
         function updateStatus(label, loading, progress = 0) {
