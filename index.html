@@ -4,135 +4,195 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VéloRoute - Planificateur Full Front-end</title>
+    <title>VéloRoute Pro - Moteur Départemental</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        #map { height: calc(100vh - 80px); width: 100%; z-index: 1; }
-        .custom-loader {
-            border: 4px solid #f3f3f3;
-            border-top: 4px solid #3498db;
+        #map { height: calc(100vh - 70px); width: 100%; }
+        .loader-spin {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #10b981;
             border-radius: 50%;
-            width: 30px;
-            height: 30px;
+            width: 24px;
+            height: 24px;
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body class="bg-gray-100 font-sans overflow-hidden">
+<body class="bg-slate-50 overflow-hidden">
 
-    <!-- Header -->
-    <header class="bg-emerald-700 text-white p-4 shadow-lg flex justify-between items-center h-20">
-        <div class="flex items-center gap-3">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-            </svg>
-            <h1 class="text-xl font-bold italic">VéloRoute <span class="font-light text-sm not-italic opacity-75">Engine</span></h1>
-        </div>
-        
+    <header class="h-[70px] bg-slate-900 text-white flex items-center justify-between px-6 shadow-xl z-[1001] relative">
         <div class="flex items-center gap-4">
-            <select id="deptSelect" class="bg-emerald-800 text-white border border-emerald-600 rounded px-3 py-1 text-sm focus:outline-none">
-                <option value="">-- Choisir un département --</option>
+            <div class="bg-emerald-500 p-2 rounded-lg">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+            </div>
+            <div>
+                <h1 class="font-bold text-lg leading-none">VéloRoute <span class="text-emerald-400">Pro</span></h1>
+                <p class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Full-Front Routing Engine</p>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <select id="deptSelect" class="bg-slate-800 border-none rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
                 <option value="75">Paris (75)</option>
-                <option value="33">Gironde (33)</option>
-                <option value="69">Rhône (69)</option>
-                <option value="13">Bouches-du-Rhône (13)</option>
-                <option value="44">Loire-Atlantique (44)</option>
+                <option value="92">Hauts-de-Seine (92)</option>
+                <option value="69">Lyon & Rhône (69)</option>
+                <option value="33">Bordeaux (33)</option>
+                <option value="13">Marseille (13)</option>
             </select>
-            <button id="loadBtn" class="bg-white text-emerald-700 px-4 py-1 rounded font-semibold text-sm hover:bg-emerald-50 transition">Charger</button>
+            <button id="loadBtn" class="bg-emerald-600 hover:bg-emerald-500 px-5 py-2 rounded-md font-bold text-sm transition-all shadow-lg shadow-emerald-900/20">
+                Charger le réseau
+            </button>
         </div>
     </header>
 
     <main class="relative">
-        <!-- Map -->
         <div id="map"></div>
 
-        <!-- Overlay Loading -->
-        <div id="loadingOverlay" class="hidden absolute inset-0 bg-black/40 z-[1000] flex flex-col items-center justify-center text-white">
-            <div class="bg-white p-6 rounded-xl flex flex-col items-center gap-4 shadow-2xl">
-                <div class="custom-loader"></div>
-                <p id="statusText" class="text-gray-800 font-medium">Initialisation...</p>
+        <!-- Panel de statut -->
+        <div id="statusPanel" class="absolute top-4 left-4 z-[1000] bg-white/90 backdrop-blur shadow-2xl rounded-xl p-4 w-72 border border-slate-200 hidden">
+            <div class="flex items-center gap-3 mb-3">
+                <div id="statusIcon" class="loader-spin"></div>
+                <p id="statusLabel" class="text-sm font-bold text-slate-800">Analyse du réseau...</p>
             </div>
+            <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                <div id="progressBar" class="bg-emerald-500 h-full w-0 transition-all duration-300"></div>
+            </div>
+            <p id="statsDetail" class="text-[10px] text-slate-500 mt-2 italic font-mono"></p>
         </div>
 
-        <!-- Info Panel -->
-        <div id="infoPanel" class="absolute bottom-6 left-6 z-[500] bg-white p-4 rounded-lg shadow-xl border border-gray-200 max-w-xs hidden">
-            <h3 class="font-bold text-gray-800 mb-2 border-b pb-1">Itinéraire calculé</h3>
-            <div class="space-y-2 text-sm text-gray-600">
-                <p>Distance : <span id="distVal" class="font-bold text-emerald-600">-</span> km</p>
-                <p>Nœuds explorés : <span id="nodeVal" class="font-bold">-</span></p>
-                <p class="text-[10px] italic">Calculé intégralement dans votre navigateur.</p>
+        <!-- Resultats -->
+        <div id="resultPanel" class="absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] bg-slate-900 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-8 border border-slate-700 hidden">
+            <div>
+                <p class="text-[10px] text-slate-400 uppercase font-bold">Distance</p>
+                <p class="text-xl font-black text-emerald-400"><span id="distVal">0</span> <span class="text-sm font-normal">km</span></p>
             </div>
-        </div>
-        
-        <!-- Controls Help -->
-        <div class="absolute top-6 right-6 z-[500] bg-white/90 p-3 rounded shadow text-xs text-gray-700 pointer-events-none">
-            <p>1. Choisissez un département</p>
-            <p>2. Cliquez "Charger"</p>
-            <p>3. Cliquez sur la carte pour le <b>Départ</b></p>
-            <p>4. Cliquez sur la carte pour l'<b>Arrivée</b></p>
+            <div class="w-px h-8 bg-slate-700"></div>
+            <div>
+                <p class="text-[10px] text-slate-400 uppercase font-bold">Temps estimé</p>
+                <p class="text-xl font-black"><span id="timeVal">0</span> <span class="text-sm font-normal">min</span></p>
+            </div>
+            <button onclick="resetPoints()" class="ml-4 p-2 hover:bg-slate-800 rounded-full transition-colors text-slate-400">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clip-rule="evenodd" />
+                </svg>
+            </button>
         </div>
     </main>
 
     <script>
-        // --- CONFIGURATION ---
-        const DEPT_BOUNDS = {
+        // Configuration des zones (approx pour la démo)
+        const REGIONS = {
             "75": [48.81, 2.22, 48.90, 2.47],
-            "33": [44.3, -1.3, 45.5, 0.4],
-            "69": [45.4, 4.4, 46.3, 5.1],
-            "13": [43.1, 4.2, 44.0, 5.8],
-            "44": [46.8, -2.6, 47.9, -1.0]
+            "92": [48.75, 2.15, 48.95, 2.35],
+            "69": [45.7, 4.75, 45.85, 4.95],
+            "33": [44.8, -0.65, 44.95, -0.45],
+            "13": [43.2, 5.3, 43.4, 5.5]
         };
 
         let map, startMarker, endMarker, routeLayer;
-        let worker;
         let points = { start: null, end: null };
+        let isGraphReady = false;
 
-        // --- WEB WORKER SOURCE ---
-        // Le code suivant est transformé en chaîne pour être exécuté dans un thread séparé.
+        // --- SOURCE DU WEB WORKER AVEC MIN-HEAP ---
         const workerCode = `
-            let graph = null;
-            let nodesMap = new Map();
+            // Implémentation d'une Min-Heap pour Dijkstra ultra-rapide
+            class MinHeap {
+                constructor() { this.heap = []; this.pos = new Map(); }
+                push(node, priority) {
+                    const item = { node, priority };
+                    this.pos.set(node, this.heap.length);
+                    this.heap.push(item);
+                    this.bubbleUp(this.heap.length - 1);
+                }
+                pop() {
+                    if (this.isEmpty()) return null;
+                    const min = this.heap[0];
+                    const last = this.heap.pop();
+                    this.pos.delete(min.node);
+                    if (!this.isEmpty()) {
+                        this.heap[0] = last;
+                        this.pos.set(last.node, 0);
+                        this.bubbleDown(0);
+                    }
+                    return min;
+                }
+                bubbleUp(index) {
+                    while (index > 0) {
+                        let parent = (index - 1) >> 1;
+                        if (this.heap[index].priority < this.heap[parent].priority) {
+                            this.swap(index, parent);
+                            index = parent;
+                        } else break;
+                    }
+                }
+                bubbleDown(index) {
+                    while (true) {
+                        let left = (index << 1) + 1, right = (index << 1) + 2, smallest = index;
+                        if (left < this.heap.length && this.heap[left].priority < this.heap[smallest].priority) smallest = left;
+                        if (right < this.heap.length && this.heap[right].priority < this.heap[smallest].priority) smallest = right;
+                        if (smallest !== index) { this.swap(index, smallest); index = smallest; } else break;
+                    }
+                }
+                swap(i, j) {
+                    [this.heap[i], this.heap[j]] = [this.heap[j], this.heap[i]];
+                    this.pos.set(this.heap[i].node, i);
+                    this.pos.set(this.heap[j].node, j);
+                }
+                isEmpty() { return this.heap.length === 0; }
+                decreaseKey(node, priority) {
+                    const index = this.pos.get(node);
+                    if (index !== undefined) {
+                        this.heap[index].priority = priority;
+                        this.bubbleUp(index);
+                    }
+                }
+            }
+
+            let graph = new Map();
 
             self.onmessage = async function(e) {
                 const { type, data } = e.data;
 
                 if (type === 'BUILD_GRAPH') {
-                    try {
-                        const geojson = data;
-                        graph = new Map();
-                        nodesMap = new Map();
-                        
-                        // Extraction des segments
-                        geojson.features.forEach(feature => {
-                            if (feature.geometry.type === 'LineString') {
-                                const coords = feature.geometry.coordinates;
-                                for (let i = 0; i < coords.length - 1; i++) {
-                                    const u = coords[i].join(',');
-                                    const v = coords[i+1].join(',');
-                                    const dist = getDistance(coords[i][1], coords[i][0], coords[i+1][1], coords[i+1][0]);
-                                    
-                                    if (!graph.has(u)) graph.set(u, []);
-                                    if (!graph.has(v)) graph.set(v, []);
-                                    
-                                    // Graphe non-orienté (vélo peut aller dans les deux sens sauf sens unique, simplifié ici)
-                                    graph.get(u).push({ to: v, dist: dist });
-                                    graph.get(v).push({ to: u, dist: dist });
-                                }
+                    graph = new Map();
+                    const elements = data.elements;
+                    let edgeCount = 0;
+
+                    elements.forEach(way => {
+                        if (way.type === 'way') {
+                            const highway = way.tags.highway;
+                            // Profil vélo : on pénalise les grosses routes
+                            let penalty = 1.0;
+                            if (highway === 'primary') penalty = 5.0;
+                            else if (highway === 'secondary') penalty = 2.0;
+                            else if (highway === 'cycleway' || highway === 'path') penalty = 0.8;
+                            else if (highway === 'motorway' || highway === 'trunk') return; // Interdit
+
+                            const coords = way.geometry;
+                            for (let i = 0; i < coords.length - 1; i++) {
+                                const u = \`\${coords[i].lon},\${coords[i].lat}\`;
+                                const v = \`\${coords[i+1].lon},\${coords[i+1].lat}\`;
+                                const d = getDistance(coords[i].lat, coords[i].lon, coords[i+1].lat, coords[i+1].lon) * penalty;
+
+                                if (!graph.has(u)) graph.set(u, []);
+                                if (!graph.has(v)) graph.set(v, []);
+                                graph.get(u).push({ to: v, dist: d, realDist: d/penalty });
+                                graph.get(v).push({ to: u, dist: d, realDist: d/penalty });
+                                edgeCount++;
                             }
-                        });
-                        self.postMessage({ type: 'GRAPH_READY', count: graph.size });
-                    } catch (err) {
-                        self.postMessage({ type: 'ERROR', message: err.message });
-                    }
+                        }
+                    });
+                    self.postMessage({ type: 'READY', nodeCount: graph.size, edgeCount });
                 }
 
-                if (type === 'CALCULATE_ROUTE') {
-                    const { start, end } = data;
-                    const path = dijkstra(start, end);
-                    self.postMessage({ type: 'ROUTE_RESULT', path: path });
+                if (type === 'ROUTE') {
+                    const result = runDijkstra(data.start, data.end);
+                    self.postMessage({ type: 'RESULT', result });
                 }
             };
 
@@ -140,231 +200,174 @@
                 const R = 6371;
                 const dLat = (lat2 - lat1) * Math.PI / 180;
                 const dLon = (lon2 - lon1) * Math.PI / 180;
-                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+                const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
                 return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
             }
 
-            function findNearestNode(coord) {
-                let minDSq = Infinity;
-                let nearest = null;
+            function findNearest(coord) {
+                let min = Infinity, nearest = null;
                 const [targetLon, targetLat] = coord.split(',').map(Number);
-
                 for (let node of graph.keys()) {
                     const [lon, lat] = node.split(',').map(Number);
-                    const dSq = Math.pow(targetLat - lat, 2) + Math.pow(targetLon - lon, 2);
-                    if (dSq < minDSq) {
-                        minDSq = dSq;
-                        nearest = node;
-                    }
+                    const d = (targetLat-lat)**2 + (targetLon-lon)**2;
+                    if (d < min) { min = d; nearest = node; }
                 }
                 return nearest;
             }
 
-            function dijkstra(startCoord, endCoord) {
-                const start = findNearestNode(startCoord);
-                const end = findNearestNode(endCoord);
-                
-                let distances = new Map();
-                let previous = new Map();
-                let pq = new Set(); // Pour simplifier sans heap binaire
+            function runDijkstra(s, e) {
+                const start = findNearest(s);
+                const end = findNearest(e);
+                const dists = new Map();
+                const prev = new Map();
+                const pq = new MinHeap();
 
-                distances.set(start, 0);
-                pq.add(start);
+                dists.set(start, 0);
+                pq.push(start, 0);
 
-                let exploredCount = 0;
+                while (!pq.isEmpty()) {
+                    const { node: curr, priority: d } = pq.pop();
+                    if (curr === end) break;
+                    if (d > (dists.get(curr) || Infinity)) continue;
 
-                while (pq.size > 0) {
-                    let minNode = null;
-                    let minDist = Infinity;
-                    
-                    // Recherche du nœud le plus proche (O(N) - lent mais simple pour démo)
-                    for (let node of pq) {
-                        if (distances.get(node) < minDist) {
-                            minDist = distances.get(node);
-                            minNode = node;
-                        }
-                    }
-
-                    if (minNode === end || !minNode) break;
-                    pq.delete(minNode);
-                    exploredCount++;
-
-                    const neighbors = graph.get(minNode) || [];
-                    for (let edge of neighbors) {
-                        let alt = distances.get(minNode) + edge.dist;
-                        if (!distances.has(edge.to) || alt < distances.get(edge.to)) {
-                            distances.set(edge.to, alt);
-                            previous.set(edge.to, minNode);
-                            pq.add(edge.to);
+                    for (let edge of (graph.get(curr) || [])) {
+                        const newDist = d + edge.dist;
+                        if (newDist < (dists.get(edge.to) || Infinity)) {
+                            dists.set(edge.to, newDist);
+                            prev.set(edge.to, curr);
+                            pq.push(edge.to, newDist);
                         }
                     }
                 }
 
-                // Reconstruction du chemin
-                let path = [];
+                const path = [];
                 let curr = end;
+                let totalKm = 0;
                 while (curr) {
                     path.push(curr.split(',').map(Number));
-                    curr = previous.get(curr);
+                    const p = prev.get(curr);
+                    if (p) {
+                        const edge = graph.get(p).find(e => e.to === curr);
+                        totalKm += edge.realDist;
+                    }
+                    curr = p;
                 }
-                
-                return { 
-                    coords: path.reverse(), 
-                    distance: distances.get(end),
-                    nodesExplored: exploredCount
-                };
+                return { coords: path.reverse(), distance: totalKm };
             }
         `;
 
-        // --- INITIALISATION ---
+        // --- LOGIQUE MAIN UI ---
+        const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(workerBlob));
+
         window.onload = () => {
-            map = L.map('map').setView([46.6, 2.2], 6);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                attribution: '© OpenStreetMap'
+            map = L.map('map', { zoomControl: false }).setView([48.8566, 2.3522], 12);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap | VéloRoute'
             }).addTo(map);
+            L.control.zoom({ position: 'topright' }).addTo(map);
 
-            const blob = new Blob([workerCode], { type: 'application/javascript' });
-            worker = new Worker(URL.createObjectURL(blob));
-
-            worker.onmessage = (e) => {
-                const { type, count, path, message } = e.data;
-                if (type === 'GRAPH_READY') {
-                    hideLoading();
-                    updateStatus(`Graphe prêt ! ${count} intersections chargées.`);
-                    setTimeout(() => updateStatus(""), 3000);
-                } else if (type === 'ROUTE_RESULT') {
-                    displayRoute(path);
-                    hideLoading();
-                } else if (type === 'ERROR') {
-                    hideLoading();
-                    showUIError(message);
-                }
-            };
-
-            document.getElementById('loadBtn').onclick = loadDepartment;
-            map.on('click', onMapClick);
+            worker.onmessage = handleWorkerMessage;
+            document.getElementById('loadBtn').onclick = fetchNetwork;
+            map.on('click', handleMapClick);
         };
 
-        async function loadDepartment() {
-            const code = document.getElementById('deptSelect').value;
-            if (!code) return;
-
-            const bounds = DEPT_BOUNDS[code];
-            map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]]);
+        async function fetchNetwork() {
+            const dept = document.getElementById('deptSelect').value;
+            const b = REGIONS[dept];
             
-            showLoading("Récupération des données OSM (Overpass)...");
-
-            // Requête Overpass limitée pour la démo (on prend les pistes cyclables et routes calmes)
-            // Note: Pour un vrai département complet, il faudrait télécharger un fichier PBF
-            const query = `[out:json][timeout:25];
-                (
-                  way["highway"~"cycleway|path|residential|tertiary"](${bounds[0]},${bounds[1]},${bounds[2]},${bounds[3]});
-                );
+            showStatus("Téléchargement du réseau complet...", 20);
+            
+            // Requête complète : toutes les routes circulables sauf autoroutes
+            const query = `[out:json][timeout:60];
+                way["highway"](${b[0]},${b[1]},${b[2]},${b[3]})["highway"!~"motorway|trunk"];
                 out geom;`;
-            
+
             try {
-                const response = await fetch('https://overpass-api.de/api/interpreter', {
+                const res = await fetch('https://overpass-api.de/api/interpreter', {
                     method: 'POST',
                     body: `data=${encodeURIComponent(query)}`
                 });
-                const data = await response.json();
+                const data = await res.json();
                 
-                // Conversion simplifiée OSM JSON vers GeoJSON pour le Worker
-                const geojson = {
-                    type: "FeatureCollection",
-                    features: data.elements.map(e => ({
-                        type: "Feature",
-                        geometry: {
-                            type: "LineString",
-                            coordinates: e.geometry.map(p => [p.lon, p.lat])
-                        }
-                    }))
-                };
-
-                showLoading("Construction du graphe routier...");
-                worker.postMessage({ type: 'BUILD_GRAPH', data: geojson });
-            } catch (err) {
-                hideLoading();
-                showUIError("Erreur lors du téléchargement. L'API Overpass est peut-être saturée.");
+                showStatus("Optimisation du graphe binaire...", 70);
+                worker.postMessage({ type: 'BUILD_GRAPH', data });
+                map.fitBounds([[b[0], b[1]], [b[2], b[3]]]);
+            } catch (e) {
+                alert("Erreur Overpass. Essayez une zone plus petite ou réessayez.");
+                hideStatus();
             }
         }
 
-        function onMapClick(e) {
+        function handleWorkerMessage(e) {
+            const { type, nodeCount, edgeCount, result } = e.data;
+            if (type === 'READY') {
+                isGraphReady = true;
+                showStatus("Prêt !", 100);
+                document.getElementById('statsDetail').innerText = `${nodeCount.toLocaleString()} nœuds | ${edgeCount.toLocaleString()} segments`;
+                document.getElementById('statusIcon').classList.replace('loader-spin', 'text-emerald-500');
+                document.getElementById('statusIcon').innerHTML = '✓';
+                setTimeout(hideStatus, 2000);
+            } else if (type === 'RESULT') {
+                hideStatus();
+                drawRoute(result);
+            }
+        }
+
+        function handleMapClick(e) {
+            if (!isGraphReady) return;
+
             if (!points.start) {
                 points.start = e.latlng;
                 if (startMarker) map.removeLayer(startMarker);
-                startMarker = L.marker(e.latlng, { icon: createIcon('emerald') }).addTo(map).bindPopup("Départ").openPopup();
-            } else {
+                startMarker = L.circleMarker(e.latlng, { radius: 8, color: '#10b981', fillOpacity: 1 }).addTo(map);
+            } else if (!points.end) {
                 points.end = e.latlng;
-                if (endMarker) map.removeLayer(endMarker);
-                endMarker = L.marker(e.latlng, { icon: createIcon('red') }).addTo(map).bindPopup("Arrivée").openPopup();
+                endMarker = L.circleMarker(e.latlng, { radius: 8, color: '#ef4444', fillOpacity: 1 }).addTo(map);
                 
-                // Calcul
-                calculatePath();
-                points.start = null; // Reset pour le prochain clic
-                points.end = null;
+                showStatus("Calcul de l'itinéraire vélo...", 50);
+                worker.postMessage({ 
+                    type: 'ROUTE', 
+                    data: { 
+                        start: `${points.start.lng},${points.start.lat}`, 
+                        end: `${points.end.lng},${points.end.lat}` 
+                    } 
+                });
+            } else {
+                resetPoints();
+                handleMapClick(e);
             }
         }
 
-        function calculatePath() {
-            showLoading("Calcul de l'itinéraire optimal...");
-            worker.postMessage({ 
-                type: 'CALCULATE_ROUTE', 
-                data: { 
-                    start: `${points.start.lng},${points.start.lat}`,
-                    end: `${points.end.lng},${points.end.lat}`
-                } 
-            });
-        }
-
-        function displayRoute(result) {
+        function drawRoute(res) {
             if (routeLayer) map.removeLayer(routeLayer);
-            
-            if (!result.coords || result.coords.length < 2) {
-                showUIError("Aucun chemin trouvé sur le réseau cyclable chargé.");
-                return;
-            }
+            if (res.coords.length < 2) return alert("Aucun chemin trouvé.");
 
-            const latLngs = result.coords.map(c => [c[1], c[0]]);
-            routeLayer = L.polyline(latLngs, { color: '#059669', weight: 6, opacity: 0.8 }).addTo(map);
-            
-            document.getElementById('infoPanel').classList.remove('hidden');
-            document.getElementById('distVal').innerText = result.distance.toFixed(2);
-            document.getElementById('nodeVal').innerText = result.nodesExplored;
+            routeLayer = L.polyline(res.coords.map(c => [c[1], c[0]]), {
+                color: '#10b981', weight: 6, opacity: 0.9, lineJoin: 'round'
+            }).addTo(map);
+
+            document.getElementById('resultPanel').classList.remove('hidden');
+            document.getElementById('distVal').innerText = res.distance.toFixed(1);
+            document.getElementById('timeVal').innerText = Math.round(res.distance * 4); // ~15km/h
         }
 
-        // --- UTILS UI ---
-        function showLoading(text) {
-            document.getElementById('loadingOverlay').classList.remove('hidden');
-            document.getElementById('statusText').innerText = text;
+        function resetPoints() {
+            points = { start: null, end: null };
+            if (startMarker) map.removeLayer(startMarker);
+            if (endMarker) map.removeLayer(endMarker);
+            if (routeLayer) map.removeLayer(routeLayer);
+            document.getElementById('resultPanel').classList.add('hidden');
         }
 
-        function hideLoading() {
-            document.getElementById('loadingOverlay').classList.add('hidden');
+        function showStatus(txt, prg) {
+            document.getElementById('statusPanel').classList.remove('hidden');
+            document.getElementById('statusLabel').innerText = txt;
+            document.getElementById('progressBar').style.width = prg + '%';
         }
 
-        function updateStatus(text) {
-            console.log(text);
-        }
-
-        function showUIError(msg) {
-            const div = document.createElement('div');
-            div.className = "fixed top-24 left-1/2 -translate-x-1/2 bg-red-500 text-white px-6 py-3 rounded-lg shadow-2xl z-[2000] animate-bounce";
-            div.innerText = msg;
-            document.body.appendChild(div);
-            setTimeout(() => div.remove(), 4000);
-        }
-
-        function createIcon(color) {
-            return new L.Icon({
-                iconUrl: `https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-${color}.png`,
-                shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-                iconSize: [25, 41],
-                iconAnchor: [12, 41],
-                popupAnchor: [1, -34],
-                shadowSize: [41, 41]
-            });
+        function hideStatus() {
+            document.getElementById('statusPanel').classList.add('hidden');
         }
     </script>
 </body>
