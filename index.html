@@ -1,4 +1,4 @@
-```html
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -11,7 +11,6 @@
     <style>
         #map { height: calc(100vh - 70px); width: 100%; background: #e5e5e5; }
         .hud-panel { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
-        /* Style des zones sélectionnables */
         .leaflet-interactive { transition: fill-opacity 0.2s, fill 0.2s; }
     </style>
 </head>
@@ -24,7 +23,7 @@
             </div>
             <div>
                 <h1 class="font-black italic text-xl tracking-tighter">VÉLO<span class="text-emerald-500">CORE</span></h1>
-                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Multi-Zones Engine</p>
+                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Typed-Array Engine</p>
             </div>
         </div>
 
@@ -34,7 +33,7 @@
                   <span id="pingSelect" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                 </span>
-                <span id="instructionText">Cliquez sur la carte pour sélectionner</span>
+                <span id="instructionText">Sélectionnez vos départements</span>
                 <span id="selCount" class="bg-slate-800 text-emerald-400 font-bold px-2 py-1 rounded ml-1">0</span>
             </div>
             
@@ -80,18 +79,25 @@
     </main>
 
     <script>
-        // --- LE MOTEUR WORKER ADDITIF (Gère les données par fragments) ---
+        // --- LE MOTEUR WORKER ULTRA-OPTIMISÉ (TYPED ARRAYS) ---
+        // Fini les array.push() qui saturent la RAM. Tout est alloué en C-style.
         const workerBlob = new Blob([`
-            let nodesLon = [];
-            let nodesLat = [];
-            let adj = []; 
-            let totalNodes = 0;
-            
-            let coordToId = new Map();
-            let idCounter = 0;
-            let processedWays = new Set(); // Évite de doubler les routes aux frontières des requêtes
+            // Limites mémoire généreuses mais fixes (zéro fragmentation RAM)
+            const MAX_NODES = 4000000; // 4 Millions d'intersections
+            const MAX_EDGES = 12000000; // 12 Millions de segments de routes
 
-            // Heap dynamique infinie
+            // Nœuds
+            let nodesLon, nodesLat, head;
+            let nodeCount = 0;
+
+            // Arêtes (Structure de liste chaînée parallèle)
+            let edgeTo, edgeWeight, edgeDist, edgeNext;
+            let edgeCount = 0;
+
+            let coordToId; // Map utilisant des entiers ultra-rapides
+            let processedWays;
+
+            // Heap dynamique optimisée pour la vitesse
             class DynamicLazyHeap {
                 constructor() { this.data = []; }
                 push(id, dist) {
@@ -135,38 +141,66 @@
                 const { type, data } = e.data;
 
                 if (type === 'BUILD_START') {
-                    nodesLon = []; nodesLat = []; adj = [];
+                    // Allocation statique de la mémoire (~150 Mo fixes, pas de fuite)
+                    nodesLon = new Float32Array(MAX_NODES);
+                    nodesLat = new Float32Array(MAX_NODES);
+                    head = new Int32Array(MAX_NODES).fill(-1);
+
+                    edgeTo = new Int32Array(MAX_EDGES);
+                    edgeWeight = new Float32Array(MAX_EDGES);
+                    edgeDist = new Float32Array(MAX_EDGES);
+                    edgeNext = new Int32Array(MAX_EDGES);
+
+                    nodeCount = 0;
+                    edgeCount = 0;
+
                     coordToId = new Map();
                     processedWays = new Set();
-                    idCounter = 0;
                 }
 
                 if (type === 'BUILD_CHUNK') {
                     const elements = data;
                     
+                    // Fonction de Hashing ultra-rapide (Convertit (lon, lat) en un Entier 53-bits)
+                    // Fini les chaînes "lon,lat" qui saturent la mémoire !
+                    function getHash(lon, lat) {
+                        const x = Math.round((lon + 180) * 100000) | 0;
+                        const y = Math.round((lat + 90) * 100000) | 0;
+                        return x * 100000000 + y; // Rentre parfaitement dans un Number standard
+                    }
+
                     function getId(lon, lat) {
-                        const key = lon.toFixed(5) + ',' + lat.toFixed(5);
+                        const key = getHash(lon, lat);
                         let id = coordToId.get(key);
                         if (id === undefined) {
-                            id = idCounter++;
+                            if (nodeCount >= MAX_NODES) return -1; // Protection anti-débordement
+                            id = nodeCount++;
                             coordToId.set(key, id);
-                            nodesLon.push(lon);
-                            nodesLat.push(lat);
-                            adj.push([]); 
+                            nodesLon[id] = lon;
+                            nodesLat[id] = lat;
                         }
                         return id;
                     }
 
+                    function addEdge(u, v, weight, dist) {
+                        if (edgeCount >= MAX_EDGES || u === -1 || v === -1) return;
+                        edgeTo[edgeCount] = v;
+                        edgeWeight[edgeCount] = weight;
+                        edgeDist[edgeCount] = dist;
+                        edgeNext[edgeCount] = head[u]; // Pointe vers l'ancienne arête de 'u'
+                        head[u] = edgeCount++;
+                    }
+
                     elements.forEach(way => {
                         if (way.type === 'way') {
-                            if (processedWays.has(way.id)) return; // Route déjà traitée (intersection de bounding boxes)
+                            if (processedWays.has(way.id)) return;
                             processedWays.add(way.id);
 
                             const hw = way.tags?.highway;
                             let penalty = 1.0;
                             if (hw === 'primary' || hw === 'secondary') penalty = 3.0;
                             else if (hw === 'cycleway') penalty = 0.5;
-                            else if (hw === 'motorway' || hw === 'trunk') return; // Exclu
+                            else if (hw === 'motorway' || hw === 'trunk') return;
 
                             const pts = way.geometry;
                             if (!pts) return;
@@ -177,21 +211,19 @@
                                 const dist = getDist(pts[i].lat, pts[i].lon, pts[i+1].lat, pts[i+1].lon);
                                 const weight = dist * penalty;
                                 
-                                adj[u].push(v, weight, dist);
-                                adj[v].push(u, weight, dist);
+                                addEdge(u, v, weight, dist);
+                                addEdge(v, u, weight, dist);
                             }
                         }
                     });
                 }
 
                 if (type === 'BUILD_FINISH') {
-                    totalNodes = idCounter;
-                    coordToId.clear(); // Libère la RAM (map string intensive)
-                    coordToId = null;
-                    processedWays.clear();
-                    processedWays = null;
+                    // Nettoyage agressif des structures de transition pour libérer la RAM du parseur
+                    coordToId.clear(); coordToId = null;
+                    processedWays.clear(); processedWays = null;
 
-                    self.postMessage({ type: 'READY', nodes: totalNodes });
+                    self.postMessage({ type: 'READY', nodes: nodeCount, edges: edgeCount });
                 }
 
                 if (type === 'ROUTE') {
@@ -210,7 +242,7 @@
 
             function findNearestId(lon, lat) {
                 let min = Infinity, bestId = -1;
-                for (let i = 0; i < totalNodes; i++) {
+                for (let i = 0; i < nodeCount; i++) {
                     const d = (nodesLon[i] - lon)**2 + (nodesLat[i] - lat)**2;
                     if (d < min) { min = d; bestId = i; }
                 }
@@ -221,11 +253,11 @@
                 const startId = findNearestId(sObj.lng, sObj.lat);
                 const endId = findNearestId(eObj.lng, eObj.lat);
                 
-                const dists = new Float64Array(totalNodes);
+                const dists = new Float64Array(nodeCount);
                 dists.fill(Infinity);
-                const prevNode = new Int32Array(totalNodes);
+                const prevNode = new Int32Array(nodeCount);
                 prevNode.fill(-1);
-                const prevDist = new Float32Array(totalNodes);
+                const prevDist = new Float32Array(nodeCount);
 
                 const pq = new DynamicLazyHeap(); 
 
@@ -240,11 +272,11 @@
                     if (curr === endId) break;
                     if (d > dists[curr]) continue;
 
-                    const neighbors = adj[curr];
-                    for (let i = 0; i < neighbors.length; i += 3) {
-                        const target = neighbors[i];
-                        const weight = neighbors[i+1];
-                        const realDist = neighbors[i+2];
+                    // Parcours de la liste chaînée aplatie (Très optimisé pour le cache CPU)
+                    for (let e = head[curr]; e !== -1; e = edgeNext[e]) {
+                        const target = edgeTo[e];
+                        const weight = edgeWeight[e];
+                        const realDist = edgeDist[e];
                         const newD = d + weight;
 
                         if (newD < dists[target]) {
@@ -277,11 +309,10 @@
         let map, routeLayer, startMarker, endMarker, deptLayer;
         let points = { start: null, end: null };
         
-        let currentMode = 'SELECT'; // 'SELECT' | 'LOADING' | 'ROUTE'
+        let currentMode = 'SELECT';
         let selectedDepts = new Set();
 
         window.onload = () => {
-            // Fond de carte Voyager (très lisible pour les routes)
             map = L.map('map', { zoomControl: false }).setView([46.5, 2.5], 6);
             L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
                 attribution: '© OpenStreetMap | © CartoDB',
@@ -294,14 +325,14 @@
             map.on('click', handleMapClick);
 
             worker.onmessage = (e) => {
-                const { type, nodes, path, time } = e.data;
+                const { type, nodes, edges, path, time } = e.data;
                 if (type === 'READY') {
                     currentMode = 'ROUTE';
                     document.getElementById('pingSelect').classList.add('hidden');
                     document.getElementById('instructionText').innerText = "Mode Routage : Cliquez pour placer vos points";
                     
                     updateStatus('Moteur opérationnel', false, 100);
-                    document.getElementById('statsDetail').innerHTML = `Graphe compilé avec succès.<br><span class="text-emerald-400 font-bold text-sm">${nodes.toLocaleString()}</span> carrefours prêts pour le routage.`;
+                    document.getElementById('statsDetail').innerHTML = `Graphe compressé généré :<br><span class="text-emerald-400 font-bold text-sm">${nodes.toLocaleString()}</span> carrefours et <span class="text-emerald-400 font-bold text-sm">${edges.toLocaleString()}</span> segments en RAM.`;
                     setTimeout(() => { if(currentMode === 'ROUTE') document.getElementById('statusBox').classList.add('hidden'); }, 4000);
                 } else if (type === 'RESULT') {
                     showRoute(path, time);
@@ -311,40 +342,26 @@
             loadDepartmentsGeoJSON();
         };
 
-        // Charge le GeoJSON officiel simplifié des départements Français
         async function loadDepartmentsGeoJSON() {
             try {
                 const res = await fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson');
                 const data = await res.json();
                 
                 deptLayer = L.geoJSON(data, {
-                    style: {
-                        color: '#475569', // slate-600
-                        weight: 1,
-                        fillOpacity: 0.1,
-                        fillColor: '#64748b' // slate-500
-                    },
+                    style: { color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' },
                     onEachFeature: (feature, layer) => {
                         const code = feature.properties.code;
-                        
                         layer.on('mouseover', () => {
-                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) {
-                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981' });
-                            }
+                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981' });
                         });
-                        
                         layer.on('mouseout', () => {
-                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) {
-                                layer.setStyle({ fillOpacity: 0.1, fillColor: '#64748b' });
-                            }
+                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) layer.setStyle({ fillOpacity: 0.1, fillColor: '#64748b' });
                         });
-
                         layer.on('click', () => {
                             if (currentMode !== 'SELECT') return;
-                            
                             if (selectedDepts.has(code)) {
                                 selectedDepts.delete(code);
-                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981', weight: 1, color: '#475569' }); // Sera remis à 0.1 par mouseout
+                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981', weight: 1, color: '#475569' });
                             } else {
                                 selectedDepts.add(code);
                                 layer.setStyle({ fillOpacity: 0.5, fillColor: '#10b981', weight: 2, color: '#047857' });
@@ -353,18 +370,11 @@
                         });
                     }
                 }).addTo(map);
-            } catch(e) {
-                console.error("Erreur chargement GeoJSON", e);
-            }
+            } catch(e) { console.error("Erreur GeoJSON", e); }
         }
 
         async function loadData() {
-            if (selectedDepts.size === 0) {
-                updateStatus('Erreur', false, 0);
-                document.getElementById('statsDetail').innerHTML = '<span class="text-amber-400">Veuillez sélectionner au moins un département sur la carte en cliquant dessus.</span>';
-                setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 3000);
-                return;
-            }
+            if (selectedDepts.size === 0) return;
 
             currentMode = 'LOADING';
             document.getElementById('loadBtn').disabled = true;
@@ -377,26 +387,22 @@
             let total = features.length;
             let current = 0;
 
-            // Recadrer la vue sur l'ensemble des départements choisis
             const group = new L.featureGroup(features);
             map.fitBounds(group.getBounds(), { padding: [20, 20] });
-
-            // On efface visuellement les départements pour laisser place à la carte routière
             deptLayer.setStyle({ opacity: 0, fillOpacity: 0 });
 
             for (const layer of features) {
                 current++;
                 const b = layer.getBounds();
-                // Bounding box: south, west, north, east
                 const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
                 const depName = layer.feature.properties.nom;
-
                 const baseProgress = ((current - 1) / total) * 100;
                 
                 updateStatus(`Extraction ${current}/${total}`, true, baseProgress);
-                document.getElementById('statsDetail').innerText = `Requête Overpass API pour le réseau de : ${depName}...`;
+                document.getElementById('statsDetail').innerText = `Requête API pour : ${depName}...`;
 
-                const query = `[out:json][timeout:180];
+                // [maxsize:1073741824] évite que l'API Overpass ne coupe pour "Memory Exhausted" sur de très grosses requêtes
+                const query = `[out:json][timeout:180][maxsize:1073741824];
                     way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|pedestrian|track"](${bbox});
                     out geom;`;
                 
@@ -411,35 +417,33 @@
                     const data = await res.json();
                     
                     updateStatus(`Intégration ${current}/${total}`, true, baseProgress + (50/total));
-                    document.getElementById('statsDetail').innerText = `Fusion de ${data.elements.length} segments en mémoire...`;
+                    document.getElementById('statsDetail').innerText = `Compression Typed-Array de ${data.elements.length} segments...`;
                     
                     worker.postMessage({ type: 'BUILD_CHUNK', data: data.elements });
+                    
+                    // On force le nettoyage du JSON reçu pour éviter que le thread principal ne sature
+                    data.elements = null; 
 
-                    // Pause stratégique de 2 secondes entre chaque région pour ne pas bloquer Overpass
                     if (current < total) {
                         updateStatus(`Pause Serveur`, true, baseProgress + (100/total));
-                        document.getElementById('statsDetail').innerText = `Attente de sécurité anti-saturation...`;
+                        document.getElementById('statsDetail').innerText = `Pause de refroidissement Overpass API...`;
                         await new Promise(r => setTimeout(r, 2000));
                     }
 
                 } catch (err) {
                     console.error(err);
-                    updateStatus('Surcharge API', false, baseProgress);
-                    document.getElementById('statsDetail').innerHTML = `<span class='text-red-400 font-bold'>Échec sur ${depName}.</span> Le serveur public Overpass est saturé ou la zone est trop lourde. Essayez avec moins de zones.`;
-                    
-                    document.getElementById('loadBtn').disabled = false;
-                    document.getElementById('loadBtn').classList.remove('hidden');
-                    return; // Stoppe tout
+                    updateStatus('Erreur API', false, baseProgress);
+                    document.getElementById('statsDetail').innerHTML = `<span class='text-red-400 font-bold'>Échec sur ${depName}.</span> Le serveur public Overpass est surchargé.`;
+                    return; 
                 }
             }
 
             updateStatus('Finalisation...', true, 95);
-            document.getElementById('statsDetail').innerText = "Nettoyage des doublons aux frontières et indexation finale...";
+            document.getElementById('statsDetail').innerText = "Libération de la mémoire et préparation Dijkstra...";
             worker.postMessage({ type: 'BUILD_FINISH' });
         }
 
         function handleMapClick(e) {
-            // On ignore les clics si on n'est pas en mode Routage prêt
             if (currentMode !== 'ROUTE') return;
 
             if (!points.start) {
@@ -450,7 +454,7 @@
                 endMarker = L.circleMarker(e.latlng, { color: '#ef4444', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
                 
                 updateStatus('Calcul Dijkstra...', true, 80);
-                document.getElementById('statsDetail').innerText = "Recherche du parcours optimal...";
+                document.getElementById('statsDetail').innerText = "Recherche du parcours optimal dans les Typed Arrays...";
                 worker.postMessage({ type: 'ROUTE', data: { start: points.start, end: points.end } });
             } else {
                 resetPoints();
@@ -464,7 +468,7 @@
             if (!path || path.coords.length === 0) {
                 resetPoints();
                 updateStatus('Échec du Routage', false, 0);
-                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Zone isolée.</span> Impossible de relier ces points avec le réseau cyclable actuellement chargé.';
+                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Zone isolée.</span> Impossible de relier ces points.';
                 setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 5000);
                 return;
             }
@@ -474,8 +478,6 @@
             setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 2000);
 
             routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 5, opacity: 1, lineJoin: 'round' }).addTo(map);
-            
-            // Focus automatique sur le trajet généré
             map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
 
             document.getElementById('routeInfo').classList.remove('hidden');
@@ -491,7 +493,6 @@
             document.getElementById('routeInfo').classList.add('hidden');
         }
 
-        // Remet l'application à zéro (retour au mode sélection de département)
         function resetFullZone() {
             resetPoints();
             document.getElementById('statusBox').classList.add('hidden');
@@ -500,12 +501,11 @@
             document.getElementById('loadBtn').disabled = false;
             
             document.getElementById('pingSelect').classList.remove('hidden');
-            document.getElementById('instructionText').innerText = "Cliquez sur la carte pour sélectionner";
+            document.getElementById('instructionText').innerText = "Sélectionnez vos départements";
             
             selectedDepts.clear();
             document.getElementById('selCount').innerText = "0";
             
-            // On réaffiche la surcouche des départements et on remet à zéro leurs styles
             deptLayer.setStyle({ opacity: 1, color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' });
             map.setView([46.5, 2.5], 6);
             
@@ -522,4 +522,4 @@
 </body>
 </html>
 
-```
+
