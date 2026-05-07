@@ -9,8 +9,10 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
-        #map { height: calc(100vh - 70px); width: 100%; filter: contrast(1.1) grayscale(0.1); }
+        #map { height: calc(100vh - 70px); width: 100%; background: #e5e5e5; }
         .hud-panel { background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        /* Style des zones sélectionnables */
+        .leaflet-interactive { transition: fill-opacity 0.2s, fill 0.2s; }
     </style>
 </head>
 <body class="bg-slate-900 text-white overflow-hidden">
@@ -22,18 +24,25 @@
             </div>
             <div>
                 <h1 class="font-black italic text-xl tracking-tighter">VÉLO<span class="text-emerald-500">CORE</span></h1>
-                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Crash-Proof Engine</p>
+                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Multi-Zones Engine</p>
             </div>
         </div>
 
-        <div class="flex gap-3">
-            <select id="deptSelect" class="bg-slate-800 text-sm border border-slate-700 rounded-md px-4 py-2 outline-none focus:border-emerald-500 text-slate-200">
-                <option value="large">Gironde (Multi-départements)</option>
-                <option value="paris">Paris & Île-de-France</option>
-                <option value="lyon">Lyon & Environs</option>
-            </select>
-            <button id="loadBtn" class="bg-emerald-600 hover:bg-emerald-500 font-bold px-6 py-2 rounded-md transition-all active:scale-95 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
-                Initialiser le Graphe
+        <div class="flex items-center gap-4">
+            <div id="selectionUI" class="text-sm font-medium text-slate-300 mr-2 flex items-center gap-2">
+                <span class="relative flex h-3 w-3">
+                  <span id="pingSelect" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+                <span id="instructionText">Cliquez sur la carte pour sélectionner</span>
+                <span id="selCount" class="bg-slate-800 text-emerald-400 font-bold px-2 py-1 rounded ml-1">0</span>
+            </div>
+            
+            <button id="resetZoneBtn" class="hidden bg-slate-800 hover:bg-slate-700 text-sm font-bold px-4 py-2 rounded-md transition-all border border-slate-700">
+                Changer de zones
+            </button>
+            <button id="loadBtn" class="bg-emerald-600 hover:bg-emerald-500 font-bold px-6 py-2 rounded-md transition-all active:scale-95 shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 disabled:cursor-not-allowed">
+                Charger le Réseau
             </button>
         </div>
     </header>
@@ -41,7 +50,7 @@
     <main class="relative">
         <div id="map"></div>
 
-        <!-- Interface de statuts (Remplaçant les alertes bloquantes) -->
+        <!-- Interface de statuts -->
         <div id="statusBox" class="hidden absolute top-4 left-4 z-[1000] hud-panel p-4 rounded-xl shadow-2xl w-80">
             <div class="flex items-center gap-3 mb-2">
                 <div id="loader" class="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
@@ -64,32 +73,33 @@
                 <p class="text-[10px] text-slate-400 font-bold uppercase">Temps de calcul</p>
                 <p class="text-2xl font-black text-white"><span id="txtTime">0</span> <span class="text-sm font-normal text-slate-300">ms</span></p>
             </div>
-            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4">
+            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4" title="Effacer l'itinéraire">
                 <svg class="w-5 h-5 fill-slate-300" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
         </div>
     </main>
 
     <script>
-        // --- LE MOTEUR WORKER TOTALEMENT REVU ---
+        // --- LE MOTEUR WORKER ADDITIF (Gère les données par fragments) ---
         const workerBlob = new Blob([`
             let nodesLon = [];
             let nodesLat = [];
             let adj = []; 
             let totalNodes = 0;
+            
+            let coordToId = new Map();
+            let idCounter = 0;
+            let processedWays = new Set(); // Évite de doubler les routes aux frontières des requêtes
 
-            // Heap dynamique infinie : Ne crashera JAMAIS peu importe la densité du graphe
+            // Heap dynamique infinie
             class DynamicLazyHeap {
-                constructor() {
-                    this.data = []; // Utilisation d'un Array JS plat (très performant en V8)
-                }
+                constructor() { this.data = []; }
                 push(id, dist) {
                     let i = this.data.length / 2;
                     this.data.push(id, dist);
                     while (i > 0) {
                         let p = (i - 1) >> 1;
                         if (this.data[p * 2 + 1] <= dist) break;
-                        
                         this.data[i * 2] = this.data[p * 2];
                         this.data[i * 2 + 1] = this.data[p * 2 + 1];
                         i = p;
@@ -100,26 +110,15 @@
                 pop() {
                     const len = this.data.length;
                     if (len === 0) return null;
-                    
-                    const topId = this.data[0];
-                    const topDist = this.data[1];
-                    
-                    const botDist = this.data.pop();
-                    const botId = this.data.pop();
-                    
+                    const topId = this.data[0], topDist = this.data[1];
+                    const botDist = this.data.pop(), botId = this.data.pop();
                     const size = this.data.length / 2;
                     if (size > 0) {
                         let i = 0;
                         while ((i * 2) + 1 < size) {
-                            let left = (i * 2) + 1;
-                            let right = left + 1;
-                            let smallest = left;
-                            
-                            if (right < size && this.data[right * 2 + 1] < this.data[left * 2 + 1]) {
-                                smallest = right;
-                            }
+                            let left = (i * 2) + 1, right = left + 1, smallest = left;
+                            if (right < size && this.data[right * 2 + 1] < this.data[left * 2 + 1]) smallest = right;
                             if (this.data[smallest * 2 + 1] >= botDist) break;
-                            
                             this.data[i * 2] = this.data[smallest * 2];
                             this.data[i * 2 + 1] = this.data[smallest * 2 + 1];
                             i = smallest;
@@ -135,13 +134,15 @@
             self.onmessage = function(e) {
                 const { type, data } = e.data;
 
-                if (type === 'BUILD') {
-                    // Force le nettoyage total de la RAM pour pouvoir enchainer les départements
+                if (type === 'BUILD_START') {
                     nodesLon = []; nodesLat = []; adj = [];
-                    let coordToId = new Map();
-                    let idCounter = 0;
+                    coordToId = new Map();
+                    processedWays = new Set();
+                    idCounter = 0;
+                }
 
-                    const elements = data.elements;
+                if (type === 'BUILD_CHUNK') {
+                    const elements = data;
                     
                     function getId(lon, lat) {
                         const key = lon.toFixed(5) + ',' + lat.toFixed(5);
@@ -158,19 +159,22 @@
 
                     elements.forEach(way => {
                         if (way.type === 'way') {
-                            const hw = way.tags.highway;
+                            if (processedWays.has(way.id)) return; // Route déjà traitée (intersection de bounding boxes)
+                            processedWays.add(way.id);
+
+                            const hw = way.tags?.highway;
                             let penalty = 1.0;
-                            // Profil vélo
                             if (hw === 'primary' || hw === 'secondary') penalty = 3.0;
                             else if (hw === 'cycleway') penalty = 0.5;
                             else if (hw === 'motorway' || hw === 'trunk') return; // Exclu
 
                             const pts = way.geometry;
+                            if (!pts) return;
+
                             for (let i = 0; i < pts.length - 1; i++) {
                                 const u = getId(pts[i].lon, pts[i].lat);
                                 const v = getId(pts[i+1].lon, pts[i+1].lat);
                                 const dist = getDist(pts[i].lat, pts[i].lon, pts[i+1].lat, pts[i+1].lon);
-                                
                                 const weight = dist * penalty;
                                 
                                 adj[u].push(v, weight, dist);
@@ -178,10 +182,14 @@
                             }
                         }
                     });
+                }
 
+                if (type === 'BUILD_FINISH') {
                     totalNodes = idCounter;
-                    coordToId.clear(); // IMPORTANT: détruit la Map pour libérer la RAM
-                    coordToId = null; 
+                    coordToId.clear(); // Libère la RAM (map string intensive)
+                    coordToId = null;
+                    processedWays.clear();
+                    processedWays = null;
 
                     self.postMessage({ type: 'READY', nodes: totalNodes });
                 }
@@ -197,7 +205,7 @@
                 const dLat = (la2 - la1) * Math.PI / 180;
                 const dLon = (lo2 - lo1) * Math.PI / 180;
                 const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
-                return 12742 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); // 12742 = 2 * 6371 (Rayon terre)
+                return 12742 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
             }
 
             function findNearestId(lon, lat) {
@@ -249,7 +257,7 @@
                 }
 
                 if (prevNode[endId] === -1 && startId !== endId) {
-                    return { coords: [], totalDist: 0 }; // Graphe déconnecté
+                    return { coords: [], totalDist: 0 }; 
                 }
 
                 const coords = [];
@@ -266,73 +274,173 @@
         `], { type: 'application/javascript' });
 
         const worker = new Worker(URL.createObjectURL(workerBlob));
-        let map, routeLayer, startMarker, endMarker;
+        let map, routeLayer, startMarker, endMarker, deptLayer;
         let points = { start: null, end: null };
-        let isReady = false;
+        
+        let currentMode = 'SELECT'; // 'SELECT' | 'LOADING' | 'ROUTE'
+        let selectedDepts = new Set();
 
         window.onload = () => {
+            // Fond de carte Voyager (très lisible pour les routes)
             map = L.map('map', { zoomControl: false }).setView([46.5, 2.5], 6);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                attribution: '© OpenStreetMap'
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap | © CartoDB',
+                maxZoom: 19
             }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
 
             document.getElementById('loadBtn').onclick = loadData;
+            document.getElementById('resetZoneBtn').onclick = resetFullZone;
             map.on('click', handleMapClick);
 
             worker.onmessage = (e) => {
                 const { type, nodes, path, time } = e.data;
                 if (type === 'READY') {
-                    isReady = true;
+                    currentMode = 'ROUTE';
+                    document.getElementById('pingSelect').classList.add('hidden');
+                    document.getElementById('instructionText').innerText = "Mode Routage : Cliquez pour placer vos points";
+                    
                     updateStatus('Moteur opérationnel', false, 100);
-                    document.getElementById('statsDetail').innerHTML = `Graphe compilé : <span class="text-emerald-400 font-bold">${nodes.toLocaleString()}</span> carrefours prêts pour le routage.`;
-                    setTimeout(() => { if(isReady) document.getElementById('statusBox').classList.add('hidden'); }, 3000);
+                    document.getElementById('statsDetail').innerHTML = `Graphe compilé avec succès.<br><span class="text-emerald-400 font-bold text-sm">${nodes.toLocaleString()}</span> carrefours prêts pour le routage.`;
+                    setTimeout(() => { if(currentMode === 'ROUTE') document.getElementById('statusBox').classList.add('hidden'); }, 4000);
                 } else if (type === 'RESULT') {
                     showRoute(path, time);
                 }
             };
+
+            loadDepartmentsGeoJSON();
         };
 
-        async function loadData() {
-            resetFull(); // Nettoie totalement la carte avant de changer de région
-            
-            const boundsMap = {
-                "large": [44.7, -0.8, 45.3, 0.2],
-                "paris": [48.75, 2.15, 48.95, 2.45],
-                "lyon": [45.65, 4.70, 45.85, 4.95]
-            };
-            const code = document.getElementById('deptSelect').value;
-            const b = boundsMap[code];
-
-            updateStatus('Acquisition des données...', true, 20);
-            document.getElementById('statsDetail').innerText = "Téléchargement d'OpenStreetMap (peut prendre 10 à 30 secondes...)";
-            map.fitBounds([[b[0], b[1]], [b[2], b[3]]]);
-            isReady = false;
-
-            // Filtre élargi pour inclure les zones piétonnes, chemins de terre et liaisons secondaires pour éviter les "trous"
-            const query = `[out:json][timeout:90];
-                way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|pedestrian|track"](${b[0]},${b[1]},${b[2]},${b[3]});
-                out geom;`;
-            
+        // Charge le GeoJSON officiel simplifié des départements Français
+        async function loadDepartmentsGeoJSON() {
             try {
-                const res = await fetch('https://overpass-api.de/api/interpreter', {
-                    method: 'POST',
-                    body: `data=${encodeURIComponent(query)}`
-                });
-                if(!res.ok) throw new Error("Overpass API Surchargée");
+                const res = await fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson');
                 const data = await res.json();
                 
-                updateStatus('Construction du graphe...', true, 70);
-                document.getElementById('statsDetail').innerText = "Analyse des connexions et indexation en mémoire RAM...";
-                worker.postMessage({ type: 'BUILD', data });
-            } catch (err) {
-                updateStatus('Erreur Réseau', false, 0);
-                document.getElementById('statsDetail').innerHTML = "<span class='text-red-400'>La zone est trop grande ou le serveur d'API est saturé. Réessayez.</span>";
+                deptLayer = L.geoJSON(data, {
+                    style: {
+                        color: '#475569', // slate-600
+                        weight: 1,
+                        fillOpacity: 0.1,
+                        fillColor: '#64748b' // slate-500
+                    },
+                    onEachFeature: (feature, layer) => {
+                        const code = feature.properties.code;
+                        
+                        layer.on('mouseover', () => {
+                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) {
+                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981' });
+                            }
+                        });
+                        
+                        layer.on('mouseout', () => {
+                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) {
+                                layer.setStyle({ fillOpacity: 0.1, fillColor: '#64748b' });
+                            }
+                        });
+
+                        layer.on('click', () => {
+                            if (currentMode !== 'SELECT') return;
+                            
+                            if (selectedDepts.has(code)) {
+                                selectedDepts.delete(code);
+                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981', weight: 1, color: '#475569' }); // Sera remis à 0.1 par mouseout
+                            } else {
+                                selectedDepts.add(code);
+                                layer.setStyle({ fillOpacity: 0.5, fillColor: '#10b981', weight: 2, color: '#047857' });
+                            }
+                            document.getElementById('selCount').innerText = selectedDepts.size;
+                        });
+                    }
+                }).addTo(map);
+            } catch(e) {
+                console.error("Erreur chargement GeoJSON", e);
             }
         }
 
+        async function loadData() {
+            if (selectedDepts.size === 0) {
+                updateStatus('Erreur', false, 0);
+                document.getElementById('statsDetail').innerHTML = '<span class="text-amber-400">Veuillez sélectionner au moins un département sur la carte en cliquant dessus.</span>';
+                setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 3000);
+                return;
+            }
+
+            currentMode = 'LOADING';
+            document.getElementById('loadBtn').disabled = true;
+            document.getElementById('loadBtn').classList.add('hidden');
+            document.getElementById('resetZoneBtn').classList.remove('hidden');
+
+            worker.postMessage({ type: 'BUILD_START' });
+
+            const features = deptLayer.getLayers().filter(l => selectedDepts.has(l.feature.properties.code));
+            let total = features.length;
+            let current = 0;
+
+            // Recadrer la vue sur l'ensemble des départements choisis
+            const group = new L.featureGroup(features);
+            map.fitBounds(group.getBounds(), { padding: [20, 20] });
+
+            // On efface visuellement les départements pour laisser place à la carte routière
+            deptLayer.setStyle({ opacity: 0, fillOpacity: 0 });
+
+            for (const layer of features) {
+                current++;
+                const b = layer.getBounds();
+                // Bounding box: south, west, north, east
+                const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
+                const depName = layer.feature.properties.nom;
+
+                const baseProgress = ((current - 1) / total) * 100;
+                
+                updateStatus(`Extraction ${current}/${total}`, true, baseProgress);
+                document.getElementById('statsDetail').innerText = `Requête Overpass API pour le réseau de : ${depName}...`;
+
+                const query = `[out:json][timeout:180];
+                    way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|pedestrian|track"](${bbox});
+                    out geom;`;
+                
+                try {
+                    const res = await fetch('https://overpass-api.de/api/interpreter', {
+                        method: 'POST',
+                        body: `data=${encodeURIComponent(query)}`
+                    });
+                    
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    
+                    const data = await res.json();
+                    
+                    updateStatus(`Intégration ${current}/${total}`, true, baseProgress + (50/total));
+                    document.getElementById('statsDetail').innerText = `Fusion de ${data.elements.length} segments en mémoire...`;
+                    
+                    worker.postMessage({ type: 'BUILD_CHUNK', data: data.elements });
+
+                    // Pause stratégique de 2 secondes entre chaque région pour ne pas bloquer Overpass
+                    if (current < total) {
+                        updateStatus(`Pause Serveur`, true, baseProgress + (100/total));
+                        document.getElementById('statsDetail').innerText = `Attente de sécurité anti-saturation...`;
+                        await new Promise(r => setTimeout(r, 2000));
+                    }
+
+                } catch (err) {
+                    console.error(err);
+                    updateStatus('Surcharge API', false, baseProgress);
+                    document.getElementById('statsDetail').innerHTML = `<span class='text-red-400 font-bold'>Échec sur ${depName}.</span> Le serveur public Overpass est saturé ou la zone est trop lourde. Essayez avec moins de zones.`;
+                    
+                    document.getElementById('loadBtn').disabled = false;
+                    document.getElementById('loadBtn').classList.remove('hidden');
+                    return; // Stoppe tout
+                }
+            }
+
+            updateStatus('Finalisation...', true, 95);
+            document.getElementById('statsDetail').innerText = "Nettoyage des doublons aux frontières et indexation finale...";
+            worker.postMessage({ type: 'BUILD_FINISH' });
+        }
+
         function handleMapClick(e) {
-            if (!isReady) return;
+            // On ignore les clics si on n'est pas en mode Routage prêt
+            if (currentMode !== 'ROUTE') return;
 
             if (!points.start) {
                 points.start = e.latlng;
@@ -341,8 +449,8 @@
                 points.end = e.latlng;
                 endMarker = L.circleMarker(e.latlng, { color: '#ef4444', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
                 
-                updateStatus('Calcul Dijkstra en cours...', true, 80);
-                document.getElementById('statsDetail').innerText = "Recherche du meilleur itinéraire...";
+                updateStatus('Calcul Dijkstra...', true, 80);
+                document.getElementById('statsDetail').innerText = "Recherche du parcours optimal...";
                 worker.postMessage({ type: 'ROUTE', data: { start: points.start, end: points.end } });
             } else {
                 resetPoints();
@@ -353,21 +461,23 @@
         function showRoute(path, time) {
             if (routeLayer) map.removeLayer(routeLayer);
             
-            // Gestion propre des erreurs de graphe déconnecté (plus d'alerte bloquante !)
             if (!path || path.coords.length === 0) {
                 resetPoints();
-                updateStatus('Calcul Échoué', false, 0);
-                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Chemin impossible.</span> Ces deux points ne sont pas reliés par des routes carrossables/cyclables dans les données chargées.';
+                updateStatus('Échec du Routage', false, 0);
+                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Zone isolée.</span> Impossible de relier ces points avec le réseau cyclable actuellement chargé.';
                 setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 5000);
                 return;
             }
 
-            // Gestion du succès cohérente
-            updateStatus('Itinéraire trouvé !', false, 100);
-            document.getElementById('statsDetail').innerText = `Calcul effectué avec succès.`;
+            updateStatus('Itinéraire trouvé', false, 100);
+            document.getElementById('statsDetail').innerText = `Calcul ultra-rapide réussi.`;
             setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 2000);
 
             routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 5, opacity: 1, lineJoin: 'round' }).addTo(map);
+            
+            // Focus automatique sur le trajet généré
+            map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
+
             document.getElementById('routeInfo').classList.remove('hidden');
             document.getElementById('txtDist').innerText = path.totalDist.toFixed(1);
             document.getElementById('txtTime').innerText = time;
@@ -381,9 +491,25 @@
             document.getElementById('routeInfo').classList.add('hidden');
         }
 
-        function resetFull() {
+        // Remet l'application à zéro (retour au mode sélection de département)
+        function resetFullZone() {
             resetPoints();
             document.getElementById('statusBox').classList.add('hidden');
+            document.getElementById('resetZoneBtn').classList.add('hidden');
+            document.getElementById('loadBtn').classList.remove('hidden');
+            document.getElementById('loadBtn').disabled = false;
+            
+            document.getElementById('pingSelect').classList.remove('hidden');
+            document.getElementById('instructionText').innerText = "Cliquez sur la carte pour sélectionner";
+            
+            selectedDepts.clear();
+            document.getElementById('selCount').innerText = "0";
+            
+            // On réaffiche la surcouche des départements et on remet à zéro leurs styles
+            deptLayer.setStyle({ opacity: 1, color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' });
+            map.setView([46.5, 2.5], 6);
+            
+            currentMode = 'SELECT';
         }
 
         function updateStatus(label, loading, progress = 0) {
@@ -395,6 +521,5 @@
     </script>
 </body>
 </html>
-
 
 ```
