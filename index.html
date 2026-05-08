@@ -23,7 +23,7 @@
             </div>
             <div>
                 <h1 class="font-black italic text-xl tracking-tighter">VÉLO<span class="text-emerald-500">CORE</span></h1>
-                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Grid-Tiling Engine</p>
+                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Typed-Array + Grid-Tiling</p>
             </div>
         </div>
 
@@ -33,15 +33,15 @@
                   <span id="pingSelect" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                 </span>
-                <span id="instructionText">Sélectionnez vos zones</span>
+                <span id="instructionText">Sélectionnez vos départements</span>
                 <span id="selCount" class="bg-slate-800 text-emerald-400 font-bold px-2 py-1 rounded ml-1">0</span>
             </div>
             
             <button id="resetZoneBtn" class="hidden bg-slate-800 hover:bg-slate-700 text-sm font-bold px-4 py-2 rounded-md transition-all border border-slate-700">
-                Réinitialiser
+                Changer de zones
             </button>
             <button id="loadBtn" class="bg-emerald-600 hover:bg-emerald-500 font-bold px-6 py-2 rounded-md transition-all active:scale-95 shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 disabled:cursor-not-allowed">
-                Charger les données
+                Charger le Réseau
             </button>
         </div>
     </header>
@@ -67,24 +67,37 @@
             </div>
             <div class="w-px h-10 bg-slate-700"></div>
             <div>
-                <p class="text-[10px] text-slate-400 font-bold uppercase">Calcul</p>
+                <p class="text-[10px] text-slate-400 font-bold uppercase">Temps de calcul</p>
                 <p class="text-2xl font-black text-white"><span id="txtTime">0</span> <span class="text-sm font-normal text-slate-300">ms</span></p>
             </div>
-            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4">
+            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4" title="Effacer l'itinéraire">
                 <svg class="w-5 h-5 fill-slate-300" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
         </div>
     </main>
 
     <script>
-        // --- WORKER BINAIRE IDENTIQUE ---
+        // =====================================================================
+        // MOTEUR WORKER : CONSERVATION STRICTE DE LA VERSION OPTIMISÉE ARRAY
+        // Aucune minification, aucune perte de logique.
+        // =====================================================================
         const workerBlob = new Blob([`
-            const MAX_NODES = 4000000;
-            const MAX_EDGES = 12000000;
-            let nodesLon, nodesLat, head, nodeCount = 0;
-            let edgeTo, edgeWeight, edgeDist, edgeNext, edgeCount = 0;
-            let coordToId, processedWays;
+            // Limites mémoire généreuses mais fixes (zéro fragmentation RAM)
+            const MAX_NODES = 4000000; // 4 Millions d'intersections
+            const MAX_EDGES = 12000000; // 12 Millions de segments de routes
 
+            // Nœuds
+            let nodesLon, nodesLat, head;
+            let nodeCount = 0;
+
+            // Arêtes (Structure de liste chaînée parallèle)
+            let edgeTo, edgeWeight, edgeDist, edgeNext;
+            let edgeCount = 0;
+
+            let coordToId; // Map utilisant des entiers ultra-rapides
+            let processedWays;
+
+            // Heap dynamique optimisée pour la vitesse
             class DynamicLazyHeap {
                 constructor() { this.data = []; }
                 push(id, dist) {
@@ -101,7 +114,8 @@
                     this.data[i * 2 + 1] = dist;
                 }
                 pop() {
-                    if (this.data.length === 0) return null;
+                    const len = this.data.length;
+                    if (len === 0) return null;
                     const topId = this.data[0], topDist = this.data[1];
                     const botDist = this.data.pop(), botId = this.data.pop();
                     const size = this.data.length / 2;
@@ -125,56 +139,93 @@
 
             self.onmessage = function(e) {
                 const { type, data } = e.data;
+
                 if (type === 'BUILD_START') {
+                    // Allocation statique de la mémoire (~150 Mo fixes, pas de fuite)
                     nodesLon = new Float32Array(MAX_NODES);
                     nodesLat = new Float32Array(MAX_NODES);
                     head = new Int32Array(MAX_NODES).fill(-1);
+
                     edgeTo = new Int32Array(MAX_EDGES);
                     edgeWeight = new Float32Array(MAX_EDGES);
                     edgeDist = new Float32Array(MAX_EDGES);
                     edgeNext = new Int32Array(MAX_EDGES);
-                    nodeCount = 0; edgeCount = 0;
-                    coordToId = new Map(); processedWays = new Set();
+
+                    nodeCount = 0;
+                    edgeCount = 0;
+
+                    coordToId = new Map();
+                    processedWays = new Set();
                 }
+
                 if (type === 'BUILD_CHUNK') {
-                    const getHash = (lon, lat) => (Math.round((lon + 180) * 100000) | 0) * 100000000 + (Math.round((lat + 90) * 100000) | 0);
-                    const getId = (lon, lat) => {
+                    const elements = data;
+                    
+                    // Fonction de Hashing ultra-rapide (Convertit (lon, lat) en un Entier 53-bits)
+                    // Fini les chaînes "lon,lat" qui saturent la mémoire !
+                    function getHash(lon, lat) {
+                        const x = Math.round((lon + 180) * 100000) | 0;
+                        const y = Math.round((lat + 90) * 100000) | 0;
+                        return x * 100000000 + y; // Rentre parfaitement dans un Number standard
+                    }
+
+                    function getId(lon, lat) {
                         const key = getHash(lon, lat);
                         let id = coordToId.get(key);
-                        if (id === undefined && nodeCount < MAX_NODES) {
-                            id = nodeCount++; coordToId.set(key, id);
-                            nodesLon[id] = lon; nodesLat[id] = lat;
+                        if (id === undefined) {
+                            if (nodeCount >= MAX_NODES) return -1; // Protection anti-débordement
+                            id = nodeCount++;
+                            coordToId.set(key, id);
+                            nodesLon[id] = lon;
+                            nodesLat[id] = lat;
                         }
                         return id;
-                    };
-                    const addEdge = (u, v, w, d) => {
-                        if (edgeCount < MAX_EDGES && u !== -1 && v !== -1) {
-                            edgeTo[edgeCount] = v; edgeWeight[edgeCount] = w; edgeDist[edgeCount] = d;
-                            edgeNext[edgeCount] = head[u]; head[u] = edgeCount++;
-                        }
-                    };
-                    data.forEach(way => {
-                        if (way.type === 'way' && !processedWays.has(way.id)) {
+                    }
+
+                    function addEdge(u, v, weight, dist) {
+                        if (edgeCount >= MAX_EDGES || u === -1 || v === -1) return;
+                        edgeTo[edgeCount] = v;
+                        edgeWeight[edgeCount] = weight;
+                        edgeDist[edgeCount] = dist;
+                        edgeNext[edgeCount] = head[u]; // Pointe vers l'ancienne arête de 'u'
+                        head[u] = edgeCount++;
+                    }
+
+                    elements.forEach(way => {
+                        if (way.type === 'way') {
+                            if (processedWays.has(way.id)) return;
                             processedWays.add(way.id);
+
                             const hw = way.tags?.highway;
-                            let p = 1.0;
-                            if (hw === 'primary' || hw === 'secondary') p = 3.0;
-                            else if (hw === 'cycleway') p = 0.5;
+                            let penalty = 1.0;
+                            if (hw === 'primary' || hw === 'secondary') penalty = 3.0;
+                            else if (hw === 'cycleway') penalty = 0.5;
                             else if (hw === 'motorway' || hw === 'trunk') return;
+
                             const pts = way.geometry;
                             if (!pts) return;
+
                             for (let i = 0; i < pts.length - 1; i++) {
-                                const u = getId(pts[i].lon, pts[i].lat), v = getId(pts[i+1].lon, pts[i+1].lat);
-                                const d = getDist(pts[i].lat, pts[i].lon, pts[i+1].lat, pts[i+1].lon);
-                                addEdge(u, v, d * p, d); addEdge(v, u, d * p, d);
+                                const u = getId(pts[i].lon, pts[i].lat);
+                                const v = getId(pts[i+1].lon, pts[i+1].lat);
+                                const dist = getDist(pts[i].lat, pts[i].lon, pts[i+1].lat, pts[i+1].lon);
+                                const weight = dist * penalty;
+                                
+                                addEdge(u, v, weight, dist);
+                                addEdge(v, u, weight, dist);
                             }
                         }
                     });
                 }
+
                 if (type === 'BUILD_FINISH') {
-                    coordToId.clear(); coordToId = null; processedWays.clear(); processedWays = null;
+                    // Nettoyage agressif des structures de transition pour libérer la RAM du parseur
+                    coordToId.clear(); coordToId = null;
+                    processedWays.clear(); processedWays = null;
+
                     self.postMessage({ type: 'READY', nodes: nodeCount, edges: edgeCount });
                 }
+
                 if (type === 'ROUTE') {
                     const startT = Date.now();
                     const path = runDijkstra(data.start, data.end);
@@ -183,51 +234,91 @@
             };
 
             function getDist(la1, lo1, la2, lo2) {
-                const dLat = (la2 - la1) * Math.PI / 180, dLon = (lo2 - lo1) * Math.PI / 180;
+                const dLat = (la2 - la1) * Math.PI / 180;
+                const dLon = (lo2 - lo1) * Math.PI / 180;
                 const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
                 return 12742 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
             }
 
-            function runDijkstra(s, e) {
-                let minStart = Infinity, startId = -1, minEnd = Infinity, endId = -1;
+            function findNearestId(lon, lat) {
+                let min = Infinity, bestId = -1;
                 for (let i = 0; i < nodeCount; i++) {
-                    const ds = (nodesLon[i] - s.lng)**2 + (nodesLat[i] - s.lat)**2;
-                    if (ds < minStart) { minStart = ds; startId = i; }
-                    const de = (nodesLon[i] - e.lng)**2 + (nodesLat[i] - e.lat)**2;
-                    if (de < minEnd) { minEnd = de; endId = i; }
+                    const d = (nodesLon[i] - lon)**2 + (nodesLat[i] - lat)**2;
+                    if (d < min) { min = d; bestId = i; }
                 }
-                const dists = new Float64Array(nodeCount).fill(Infinity);
-                const prev = new Int32Array(nodeCount).fill(-1), pDist = new Float32Array(nodeCount);
-                const pq = new DynamicLazyHeap();
-                dists[startId] = 0; pq.push(startId, 0);
+                return bestId;
+            }
+
+            function runDijkstra(sObj, eObj) {
+                const startId = findNearestId(sObj.lng, sObj.lat);
+                const endId = findNearestId(eObj.lng, eObj.lat);
+                
+                const dists = new Float64Array(nodeCount);
+                dists.fill(Infinity);
+                const prevNode = new Int32Array(nodeCount);
+                prevNode.fill(-1);
+                const prevDist = new Float32Array(nodeCount);
+
+                const pq = new DynamicLazyHeap(); 
+
+                dists[startId] = 0;
+                pq.push(startId, 0);
+
                 while (pq.size > 0) {
-                    const { id: curr, dist: d } = pq.pop();
+                    const top = pq.pop();
+                    const curr = top.id;
+                    const d = top.dist;
+
                     if (curr === endId) break;
                     if (d > dists[curr]) continue;
+
+                    // Parcours de la liste chaînée aplatie (Très optimisé pour le cache CPU)
                     for (let e = head[curr]; e !== -1; e = edgeNext[e]) {
-                        const target = edgeTo[e], newD = d + edgeWeight[e];
+                        const target = edgeTo[e];
+                        const weight = edgeWeight[e];
+                        const realDist = edgeDist[e];
+                        const newD = d + weight;
+
                         if (newD < dists[target]) {
-                            dists[target] = newD; prev[target] = curr; pDist[target] = edgeDist[e]; pq.push(target, newD);
+                            dists[target] = newD;
+                            prevNode[target] = curr;
+                            prevDist[target] = realDist;
+                            pq.push(target, newD);
                         }
                     }
                 }
-                const coords = []; let curr = endId, totalDist = 0;
-                if (prev[endId] === -1 && startId !== endId) return { coords: [], totalDist: 0 };
+
+                if (prevNode[endId] === -1 && startId !== endId) {
+                    return { coords: [], totalDist: 0 }; 
+                }
+
+                const coords = [];
+                let curr = endId;
+                let totalDist = 0;
+
                 while (curr !== -1) {
                     coords.push([nodesLat[curr], nodesLon[curr]]);
-                    totalDist += pDist[curr]; curr = prev[curr];
+                    totalDist += prevDist[curr] || 0;
+                    curr = prevNode[curr];
                 }
                 return { coords, totalDist };
             }
         `], { type: 'application/javascript' });
+        // =====================================================================
 
         const worker = new Worker(URL.createObjectURL(workerBlob));
         let map, routeLayer, startMarker, endMarker, deptLayer;
-        let points = { start: null, end: null }, selectedDepts = new Set(), currentMode = 'SELECT';
+        let points = { start: null, end: null };
+        
+        let currentMode = 'SELECT';
+        let selectedDepts = new Set();
 
         window.onload = () => {
             map = L.map('map', { zoomControl: false }).setView([46.5, 2.5], 6);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { attribution: '© OSM | © CartoDB', maxZoom: 19 }).addTo(map);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                attribution: '© OpenStreetMap | © CartoDB',
+                maxZoom: 19
+            }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
 
             document.getElementById('loadBtn').onclick = loadData;
@@ -239,114 +330,194 @@
                 if (type === 'READY') {
                     currentMode = 'ROUTE';
                     document.getElementById('pingSelect').classList.add('hidden');
-                    document.getElementById('instructionText').innerText = "Placer départ/arrivée";
-                    updateStatus('Prêt', false, 100);
-                    document.getElementById('statsDetail').innerHTML = `Graphe compilé : <b>${nodes.toLocaleString()}</b> nœuds et <b>${edges.toLocaleString()}</b> routes.`;
-                } else if (type === 'RESULT') showRoute(path, time);
+                    document.getElementById('instructionText').innerText = "Mode Routage : Cliquez pour placer vos points";
+                    
+                    updateStatus('Moteur opérationnel', false, 100);
+                    document.getElementById('statsDetail').innerHTML = `Graphe compressé généré :<br><span class="text-emerald-400 font-bold text-sm">${nodes.toLocaleString()}</span> carrefours et <span class="text-emerald-400 font-bold text-sm">${edges.toLocaleString()}</span> segments en RAM.`;
+                    setTimeout(() => { if(currentMode === 'ROUTE') document.getElementById('statusBox').classList.add('hidden'); }, 4000);
+                } else if (type === 'RESULT') {
+                    showRoute(path, time);
+                }
             };
-            loadDepts();
+
+            loadDepartmentsGeoJSON();
         };
 
-        async function loadDepts() {
-            const res = await fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson');
-            const data = await res.json();
-            deptLayer = L.geoJSON(data, {
-                style: { color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' },
-                onEachFeature: (f, l) => {
-                    l.on('click', () => {
-                        if (currentMode !== 'SELECT') return;
-                        const c = f.properties.code;
-                        if (selectedDepts.has(c)) { selectedDepts.delete(c); l.setStyle({ fillOpacity: 0.1, weight: 1 }); }
-                        else { selectedDepts.add(c); l.setStyle({ fillOpacity: 0.5, fillColor: '#10b981', weight: 2 }); }
-                        document.getElementById('selCount').innerText = selectedDepts.size;
-                    });
-                }
-            }).addTo(map);
+        async function loadDepartmentsGeoJSON() {
+            try {
+                const res = await fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson');
+                const data = await res.json();
+                
+                deptLayer = L.geoJSON(data, {
+                    style: { color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' },
+                    onEachFeature: (feature, layer) => {
+                        const code = feature.properties.code;
+                        layer.on('mouseover', () => {
+                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981' });
+                        });
+                        layer.on('mouseout', () => {
+                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) layer.setStyle({ fillOpacity: 0.1, fillColor: '#64748b' });
+                        });
+                        layer.on('click', () => {
+                            if (currentMode !== 'SELECT') return;
+                            if (selectedDepts.has(code)) {
+                                selectedDepts.delete(code);
+                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981', weight: 1, color: '#475569' });
+                            } else {
+                                selectedDepts.add(code);
+                                layer.setStyle({ fillOpacity: 0.5, fillColor: '#10b981', weight: 2, color: '#047857' });
+                            }
+                            document.getElementById('selCount').innerText = selectedDepts.size;
+                        });
+                    }
+                }).addTo(map);
+            } catch(e) { console.error("Erreur GeoJSON", e); }
         }
 
+        // =====================================================================
+        // NOUVELLE FONCTION DE CHARGEMENT : TUILAGE (GRID-TILING) + RETRY
+        // Résout les erreurs 429 / 504 de l'API Overpass
+        // =====================================================================
         async function loadData() {
             if (selectedDepts.size === 0) return;
+
             currentMode = 'LOADING';
+            document.getElementById('loadBtn').disabled = true;
             document.getElementById('loadBtn').classList.add('hidden');
             document.getElementById('resetZoneBtn').classList.remove('hidden');
+
             worker.postMessage({ type: 'BUILD_START' });
 
-            const layers = deptLayer.getLayers().filter(l => selectedDepts.has(l.feature.properties.code));
-            map.fitBounds(new L.featureGroup(layers).getBounds(), { padding: [20, 20] });
+            const features = deptLayer.getLayers().filter(l => selectedDepts.has(l.feature.properties.code));
+            
+            // Recadre la carte
+            const group = new L.featureGroup(features);
+            map.fitBounds(group.getBounds(), { padding: [20, 20] });
             deptLayer.setStyle({ opacity: 0, fillOpacity: 0 });
 
-            // On génère la liste des "Tuiles" (subdivision de chaque département en 4)
+            // 1. Découpage (Tuilage) de chaque département en 4 secteurs (SO, SE, NO, NE)
             let tiles = [];
-            layers.forEach(l => {
-                const b = l.getBounds();
-                const midLat = (b.getSouth() + b.getNorth()) / 2;
-                const midLon = (b.getWest() + b.getEast()) / 2;
-                const name = l.feature.properties.nom;
-                tiles.push(
-                    { name: name + " (SO)", bbox: `${b.getSouth()},${b.getWest()},${midLat},${midLon}` },
-                    { name: name + " (SE)", bbox: `${b.getSouth()},${midLon},${midLat},${b.getEast()}` },
-                    { name: name + " (NO)", bbox: `${midLat},${b.getWest()},${b.getNorth()},${midLon}` },
-                    { name: name + " (NE)", bbox: `${midLat},${midLon},${b.getNorth()},${b.getEast()}` }
-                );
+            features.forEach(layer => {
+                const b = layer.getBounds();
+                const south = b.getSouth();
+                const west = b.getWest();
+                const north = b.getNorth();
+                const east = b.getEast();
+                
+                const midLat = (south + north) / 2;
+                const midLon = (west + east) / 2;
+                const depName = layer.feature.properties.nom;
+
+                tiles.push({ name: depName + " (Sud-Ouest)", bbox: `${south},${west},${midLat},${midLon}` });
+                tiles.push({ name: depName + " (Sud-Est)", bbox: `${south},${midLon},${midLat},${east}` });
+                tiles.push({ name: depName + " (Nord-Ouest)", bbox: `${midLat},${west},${north},${midLon}` });
+                tiles.push({ name: depName + " (Nord-Est)", bbox: `${midLat},${midLon},${north},${east}` });
             });
 
-            for (let i = 0; i < tiles.length; i++) {
-                const t = tiles[i];
-                const progress = (i / tiles.length) * 100;
-                updateStatus(`Chargement ${i+1}/${tiles.length}`, true, progress);
-                document.getElementById('statsDetail').innerText = `Tuile : ${t.name}...`;
-
+            // 2. Traitement séquentiel avec Retry
+            const totalTiles = tiles.length;
+            
+            for (let i = 0; i < totalTiles; i++) {
+                const tile = tiles[i];
+                const baseProgress = (i / totalTiles) * 100;
+                
                 let success = false;
                 let retries = 0;
+                const maxRetries = 3;
 
-                while (!success && retries < 3) {
+                while (!success && retries < maxRetries) {
                     try {
+                        updateStatus(`Secteur ${i+1}/${totalTiles}`, true, baseProgress);
+                        
+                        let retryText = retries > 0 ? `<br><span class="text-amber-400">Nouvelle tentative (${retries}/${maxRetries})...</span>` : "";
+                        document.getElementById('statsDetail').innerHTML = `Requête API pour : ${tile.name}...${retryText}`;
+
+                        // maxsize autorise le serveur à allouer plus de RAM
+                        const query = `[out:json][timeout:180][maxsize:1073741824];
+                            way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|pedestrian|track"](${tile.bbox});
+                            out geom;`;
+                        
                         const res = await fetch('https://overpass-api.de/api/interpreter', {
                             method: 'POST',
-                            body: `data=${encodeURIComponent(`[out:json][timeout:90][maxsize:536870912];way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|track"](${t.bbox});out geom;`)}`
+                            body: `data=${encodeURIComponent(query)}`
                         });
-                        if (!res.ok) throw new Error();
+                        
+                        if (!res.ok) {
+                            if (res.status === 429) throw new Error("Too Many Requests");
+                            throw new Error(`HTTP ${res.status}`);
+                        }
+                        
                         const data = await res.json();
+                        
+                        updateStatus(`Intégration ${i+1}/${totalTiles}`, true, baseProgress + (50/totalTiles));
+                        document.getElementById('statsDetail').innerText = `Compression de ${data.elements.length} segments...`;
+                        
                         worker.postMessage({ type: 'BUILD_CHUNK', data: data.elements });
+                        data.elements = null; // Libère la RAM côté UI
+                        
                         success = true;
-                    } catch (e) {
+
+                        // Pause de sécurité avant la prochaine tuile (Anti-Ban IP)
+                        if (i < totalTiles - 1) {
+                            updateStatus(`Pause API`, true, baseProgress + (90/totalTiles));
+                            await new Promise(r => setTimeout(r, 1500)); 
+                        }
+
+                    } catch (err) {
                         retries++;
-                        document.getElementById('statsDetail').innerText = `Échec tuile ${t.name}. Nouvelle tentative (${retries}/3)...`;
-                        await new Promise(r => setTimeout(r, 3000));
+                        if (retries >= maxRetries) {
+                            updateStatus('Erreur API', false, baseProgress);
+                            document.getElementById('statsDetail').innerHTML = `<span class='text-red-400 font-bold'>Échec critique sur ${tile.name}.</span> Le serveur public Overpass vous a temporairement bloqué.`;
+                            return; // Stoppe le processus total
+                        }
+                        // Pause plus longue en cas d'erreur
+                        await new Promise(r => setTimeout(r, 4000));
                     }
                 }
-                // Pause de sécurité entre les tuiles
-                await new Promise(r => setTimeout(r, 1500));
             }
 
-            updateStatus('Finalisation', true, 98);
+            updateStatus('Finalisation...', true, 95);
+            document.getElementById('statsDetail').innerText = "Libération de la mémoire et préparation Dijkstra...";
             worker.postMessage({ type: 'BUILD_FINISH' });
         }
 
         function handleMapClick(e) {
             if (currentMode !== 'ROUTE') return;
+
             if (!points.start) {
                 points.start = e.latlng;
-                startMarker = L.circleMarker(e.latlng, { color: '#fff', fillColor: '#10b981', radius: 8, fillOpacity: 1, weight: 2 }).addTo(map);
+                startMarker = L.circleMarker(e.latlng, { color: '#10b981', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
             } else if (!points.end) {
                 points.end = e.latlng;
-                endMarker = L.circleMarker(e.latlng, { color: '#fff', fillColor: '#ef4444', radius: 8, fillOpacity: 1, weight: 2 }).addTo(map);
-                updateStatus('Calcul...', true, 50);
+                endMarker = L.circleMarker(e.latlng, { color: '#ef4444', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
+                
+                updateStatus('Calcul Dijkstra...', true, 80);
+                document.getElementById('statsDetail').innerText = "Recherche du parcours optimal dans les Typed Arrays...";
                 worker.postMessage({ type: 'ROUTE', data: { start: points.start, end: points.end } });
-            } else { resetPoints(); handleMapClick(e); }
+            } else {
+                resetPoints();
+                handleMapClick(e);
+            }
         }
 
         function showRoute(path, time) {
             if (routeLayer) map.removeLayer(routeLayer);
+            
             if (!path || path.coords.length === 0) {
-                updateStatus('Échec', false, 0);
-                document.getElementById('statsDetail').innerText = "Aucun chemin trouvé entre ces deux points.";
                 resetPoints();
+                updateStatus('Échec du Routage', false, 0);
+                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Zone isolée.</span> Impossible de relier ces points.';
+                setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 5000);
                 return;
             }
-            document.getElementById('statusBox').classList.add('hidden');
-            routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 6, opacity: 0.9 }).addTo(map);
+
+            updateStatus('Itinéraire trouvé', false, 100);
+            document.getElementById('statsDetail').innerText = `Calcul ultra-rapide réussi.`;
+            setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 2000);
+
+            routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 5, opacity: 1, lineJoin: 'round' }).addTo(map);
             map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
+
             document.getElementById('routeInfo').classList.remove('hidden');
             document.getElementById('txtDist').innerText = path.totalDist.toFixed(1);
             document.getElementById('txtTime').innerText = time;
@@ -354,30 +525,40 @@
 
         function resetPoints() {
             points = { start: null, end: null };
-            if (startMarker) map.removeLayer(startMarker); if (endMarker) map.removeLayer(endMarker); if (routeLayer) map.removeLayer(routeLayer);
+            if (startMarker) map.removeLayer(startMarker);
+            if (endMarker) map.removeLayer(endMarker);
+            if (routeLayer) map.removeLayer(routeLayer);
             document.getElementById('routeInfo').classList.add('hidden');
         }
 
         function resetFullZone() {
-            resetPoints(); selectedDepts.clear();
-            document.getElementById('selCount').innerText = "0";
+            resetPoints();
             document.getElementById('statusBox').classList.add('hidden');
             document.getElementById('resetZoneBtn').classList.add('hidden');
             document.getElementById('loadBtn').classList.remove('hidden');
-            document.getElementById('instructionText').innerText = "Sélectionnez vos zones";
+            document.getElementById('loadBtn').disabled = false;
+            
             document.getElementById('pingSelect').classList.remove('hidden');
-            deptLayer.setStyle({ opacity: 1, fillOpacity: 0.1, fillColor: '#64748b' });
+            document.getElementById('instructionText').innerText = "Sélectionnez vos départements";
+            
+            selectedDepts.clear();
+            document.getElementById('selCount').innerText = "0";
+            
+            deptLayer.setStyle({ opacity: 1, color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' });
+            map.setView([46.5, 2.5], 6);
+            
             currentMode = 'SELECT';
         }
 
-        function updateStatus(l, loading, p = 0) {
+        function updateStatus(label, loading, progress = 0) {
             document.getElementById('statusBox').classList.remove('hidden');
-            document.getElementById('statusLabel').innerText = l;
+            document.getElementById('statusLabel').innerText = label;
             document.getElementById('loader').style.display = loading ? 'block' : 'none';
-            document.getElementById('progressBar').style.width = p + '%';
+            document.getElementById('progressBar').style.width = progress + '%';
         }
     </script>
 </body>
 </html>
+
 
 ```
