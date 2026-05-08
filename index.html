@@ -1,4 +1,4 @@
-
+```html
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -23,7 +23,7 @@
             </div>
             <div>
                 <h1 class="font-black italic text-xl tracking-tighter">VÉLO<span class="text-emerald-500">CORE</span></h1>
-                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Typed-Array Engine</p>
+                <p class="text-[9px] text-emerald-400 font-mono tracking-widest uppercase">Grid-Tiling Engine</p>
             </div>
         </div>
 
@@ -33,15 +33,15 @@
                   <span id="pingSelect" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                   <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
                 </span>
-                <span id="instructionText">Sélectionnez vos départements</span>
+                <span id="instructionText">Sélectionnez vos zones</span>
                 <span id="selCount" class="bg-slate-800 text-emerald-400 font-bold px-2 py-1 rounded ml-1">0</span>
             </div>
             
             <button id="resetZoneBtn" class="hidden bg-slate-800 hover:bg-slate-700 text-sm font-bold px-4 py-2 rounded-md transition-all border border-slate-700">
-                Changer de zones
+                Réinitialiser
             </button>
             <button id="loadBtn" class="bg-emerald-600 hover:bg-emerald-500 font-bold px-6 py-2 rounded-md transition-all active:scale-95 shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 disabled:cursor-not-allowed">
-                Charger le Réseau
+                Charger les données
             </button>
         </div>
     </header>
@@ -49,7 +49,6 @@
     <main class="relative">
         <div id="map"></div>
 
-        <!-- Interface de statuts -->
         <div id="statusBox" class="hidden absolute top-4 left-4 z-[1000] hud-panel p-4 rounded-xl shadow-2xl w-80">
             <div class="flex items-center gap-3 mb-2">
                 <div id="loader" class="w-4 h-4 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
@@ -61,7 +60,6 @@
             <p id="statsDetail" class="text-[11px] text-slate-300 mt-2 leading-relaxed"></p>
         </div>
 
-        <!-- Résultat Itinéraire -->
         <div id="routeInfo" class="hidden absolute bottom-8 left-1/2 -translate-x-1/2 z-[1000] hud-panel p-5 rounded-2xl shadow-2xl flex items-center gap-8 border border-emerald-900/50">
             <div>
                 <p class="text-[10px] text-slate-400 font-bold uppercase">Distance</p>
@@ -69,35 +67,24 @@
             </div>
             <div class="w-px h-10 bg-slate-700"></div>
             <div>
-                <p class="text-[10px] text-slate-400 font-bold uppercase">Temps de calcul</p>
+                <p class="text-[10px] text-slate-400 font-bold uppercase">Calcul</p>
                 <p class="text-2xl font-black text-white"><span id="txtTime">0</span> <span class="text-sm font-normal text-slate-300">ms</span></p>
             </div>
-            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4" title="Effacer l'itinéraire">
+            <button onclick="resetPoints()" class="bg-slate-800 p-3 rounded-xl hover:bg-slate-700 border border-slate-700 transition-colors ml-4">
                 <svg class="w-5 h-5 fill-slate-300" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
             </button>
         </div>
     </main>
 
     <script>
-        // --- LE MOTEUR WORKER ULTRA-OPTIMISÉ (TYPED ARRAYS) ---
-        // Fini les array.push() qui saturent la RAM. Tout est alloué en C-style.
+        // --- WORKER BINAIRE IDENTIQUE ---
         const workerBlob = new Blob([`
-            // Limites mémoire généreuses mais fixes (zéro fragmentation RAM)
-            const MAX_NODES = 4000000; // 4 Millions d'intersections
-            const MAX_EDGES = 12000000; // 12 Millions de segments de routes
+            const MAX_NODES = 4000000;
+            const MAX_EDGES = 12000000;
+            let nodesLon, nodesLat, head, nodeCount = 0;
+            let edgeTo, edgeWeight, edgeDist, edgeNext, edgeCount = 0;
+            let coordToId, processedWays;
 
-            // Nœuds
-            let nodesLon, nodesLat, head;
-            let nodeCount = 0;
-
-            // Arêtes (Structure de liste chaînée parallèle)
-            let edgeTo, edgeWeight, edgeDist, edgeNext;
-            let edgeCount = 0;
-
-            let coordToId; // Map utilisant des entiers ultra-rapides
-            let processedWays;
-
-            // Heap dynamique optimisée pour la vitesse
             class DynamicLazyHeap {
                 constructor() { this.data = []; }
                 push(id, dist) {
@@ -114,8 +101,7 @@
                     this.data[i * 2 + 1] = dist;
                 }
                 pop() {
-                    const len = this.data.length;
-                    if (len === 0) return null;
+                    if (this.data.length === 0) return null;
                     const topId = this.data[0], topDist = this.data[1];
                     const botDist = this.data.pop(), botId = this.data.pop();
                     const size = this.data.length / 2;
@@ -139,93 +125,56 @@
 
             self.onmessage = function(e) {
                 const { type, data } = e.data;
-
                 if (type === 'BUILD_START') {
-                    // Allocation statique de la mémoire (~150 Mo fixes, pas de fuite)
                     nodesLon = new Float32Array(MAX_NODES);
                     nodesLat = new Float32Array(MAX_NODES);
                     head = new Int32Array(MAX_NODES).fill(-1);
-
                     edgeTo = new Int32Array(MAX_EDGES);
                     edgeWeight = new Float32Array(MAX_EDGES);
                     edgeDist = new Float32Array(MAX_EDGES);
                     edgeNext = new Int32Array(MAX_EDGES);
-
-                    nodeCount = 0;
-                    edgeCount = 0;
-
-                    coordToId = new Map();
-                    processedWays = new Set();
+                    nodeCount = 0; edgeCount = 0;
+                    coordToId = new Map(); processedWays = new Set();
                 }
-
                 if (type === 'BUILD_CHUNK') {
-                    const elements = data;
-                    
-                    // Fonction de Hashing ultra-rapide (Convertit (lon, lat) en un Entier 53-bits)
-                    // Fini les chaînes "lon,lat" qui saturent la mémoire !
-                    function getHash(lon, lat) {
-                        const x = Math.round((lon + 180) * 100000) | 0;
-                        const y = Math.round((lat + 90) * 100000) | 0;
-                        return x * 100000000 + y; // Rentre parfaitement dans un Number standard
-                    }
-
-                    function getId(lon, lat) {
+                    const getHash = (lon, lat) => (Math.round((lon + 180) * 100000) | 0) * 100000000 + (Math.round((lat + 90) * 100000) | 0);
+                    const getId = (lon, lat) => {
                         const key = getHash(lon, lat);
                         let id = coordToId.get(key);
-                        if (id === undefined) {
-                            if (nodeCount >= MAX_NODES) return -1; // Protection anti-débordement
-                            id = nodeCount++;
-                            coordToId.set(key, id);
-                            nodesLon[id] = lon;
-                            nodesLat[id] = lat;
+                        if (id === undefined && nodeCount < MAX_NODES) {
+                            id = nodeCount++; coordToId.set(key, id);
+                            nodesLon[id] = lon; nodesLat[id] = lat;
                         }
                         return id;
-                    }
-
-                    function addEdge(u, v, weight, dist) {
-                        if (edgeCount >= MAX_EDGES || u === -1 || v === -1) return;
-                        edgeTo[edgeCount] = v;
-                        edgeWeight[edgeCount] = weight;
-                        edgeDist[edgeCount] = dist;
-                        edgeNext[edgeCount] = head[u]; // Pointe vers l'ancienne arête de 'u'
-                        head[u] = edgeCount++;
-                    }
-
-                    elements.forEach(way => {
-                        if (way.type === 'way') {
-                            if (processedWays.has(way.id)) return;
+                    };
+                    const addEdge = (u, v, w, d) => {
+                        if (edgeCount < MAX_EDGES && u !== -1 && v !== -1) {
+                            edgeTo[edgeCount] = v; edgeWeight[edgeCount] = w; edgeDist[edgeCount] = d;
+                            edgeNext[edgeCount] = head[u]; head[u] = edgeCount++;
+                        }
+                    };
+                    data.forEach(way => {
+                        if (way.type === 'way' && !processedWays.has(way.id)) {
                             processedWays.add(way.id);
-
                             const hw = way.tags?.highway;
-                            let penalty = 1.0;
-                            if (hw === 'primary' || hw === 'secondary') penalty = 3.0;
-                            else if (hw === 'cycleway') penalty = 0.5;
+                            let p = 1.0;
+                            if (hw === 'primary' || hw === 'secondary') p = 3.0;
+                            else if (hw === 'cycleway') p = 0.5;
                             else if (hw === 'motorway' || hw === 'trunk') return;
-
                             const pts = way.geometry;
                             if (!pts) return;
-
                             for (let i = 0; i < pts.length - 1; i++) {
-                                const u = getId(pts[i].lon, pts[i].lat);
-                                const v = getId(pts[i+1].lon, pts[i+1].lat);
-                                const dist = getDist(pts[i].lat, pts[i].lon, pts[i+1].lat, pts[i+1].lon);
-                                const weight = dist * penalty;
-                                
-                                addEdge(u, v, weight, dist);
-                                addEdge(v, u, weight, dist);
+                                const u = getId(pts[i].lon, pts[i].lat), v = getId(pts[i+1].lon, pts[i+1].lat);
+                                const d = getDist(pts[i].lat, pts[i].lon, pts[i+1].lat, pts[i+1].lon);
+                                addEdge(u, v, d * p, d); addEdge(v, u, d * p, d);
                             }
                         }
                     });
                 }
-
                 if (type === 'BUILD_FINISH') {
-                    // Nettoyage agressif des structures de transition pour libérer la RAM du parseur
-                    coordToId.clear(); coordToId = null;
-                    processedWays.clear(); processedWays = null;
-
+                    coordToId.clear(); coordToId = null; processedWays.clear(); processedWays = null;
                     self.postMessage({ type: 'READY', nodes: nodeCount, edges: edgeCount });
                 }
-
                 if (type === 'ROUTE') {
                     const startT = Date.now();
                     const path = runDijkstra(data.start, data.end);
@@ -234,72 +183,39 @@
             };
 
             function getDist(la1, lo1, la2, lo2) {
-                const dLat = (la2 - la1) * Math.PI / 180;
-                const dLon = (lo2 - lo1) * Math.PI / 180;
+                const dLat = (la2 - la1) * Math.PI / 180, dLon = (lo2 - lo1) * Math.PI / 180;
                 const a = Math.sin(dLat/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLon/2)**2;
                 return 12742 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
             }
 
-            function findNearestId(lon, lat) {
-                let min = Infinity, bestId = -1;
+            function runDijkstra(s, e) {
+                let minStart = Infinity, startId = -1, minEnd = Infinity, endId = -1;
                 for (let i = 0; i < nodeCount; i++) {
-                    const d = (nodesLon[i] - lon)**2 + (nodesLat[i] - lat)**2;
-                    if (d < min) { min = d; bestId = i; }
+                    const ds = (nodesLon[i] - s.lng)**2 + (nodesLat[i] - s.lat)**2;
+                    if (ds < minStart) { minStart = ds; startId = i; }
+                    const de = (nodesLon[i] - e.lng)**2 + (nodesLat[i] - e.lat)**2;
+                    if (de < minEnd) { minEnd = de; endId = i; }
                 }
-                return bestId;
-            }
-
-            function runDijkstra(sObj, eObj) {
-                const startId = findNearestId(sObj.lng, sObj.lat);
-                const endId = findNearestId(eObj.lng, eObj.lat);
-                
-                const dists = new Float64Array(nodeCount);
-                dists.fill(Infinity);
-                const prevNode = new Int32Array(nodeCount);
-                prevNode.fill(-1);
-                const prevDist = new Float32Array(nodeCount);
-
-                const pq = new DynamicLazyHeap(); 
-
-                dists[startId] = 0;
-                pq.push(startId, 0);
-
+                const dists = new Float64Array(nodeCount).fill(Infinity);
+                const prev = new Int32Array(nodeCount).fill(-1), pDist = new Float32Array(nodeCount);
+                const pq = new DynamicLazyHeap();
+                dists[startId] = 0; pq.push(startId, 0);
                 while (pq.size > 0) {
-                    const top = pq.pop();
-                    const curr = top.id;
-                    const d = top.dist;
-
+                    const { id: curr, dist: d } = pq.pop();
                     if (curr === endId) break;
                     if (d > dists[curr]) continue;
-
-                    // Parcours de la liste chaînée aplatie (Très optimisé pour le cache CPU)
                     for (let e = head[curr]; e !== -1; e = edgeNext[e]) {
-                        const target = edgeTo[e];
-                        const weight = edgeWeight[e];
-                        const realDist = edgeDist[e];
-                        const newD = d + weight;
-
+                        const target = edgeTo[e], newD = d + edgeWeight[e];
                         if (newD < dists[target]) {
-                            dists[target] = newD;
-                            prevNode[target] = curr;
-                            prevDist[target] = realDist;
-                            pq.push(target, newD);
+                            dists[target] = newD; prev[target] = curr; pDist[target] = edgeDist[e]; pq.push(target, newD);
                         }
                     }
                 }
-
-                if (prevNode[endId] === -1 && startId !== endId) {
-                    return { coords: [], totalDist: 0 }; 
-                }
-
-                const coords = [];
-                let curr = endId;
-                let totalDist = 0;
-
+                const coords = []; let curr = endId, totalDist = 0;
+                if (prev[endId] === -1 && startId !== endId) return { coords: [], totalDist: 0 };
                 while (curr !== -1) {
                     coords.push([nodesLat[curr], nodesLon[curr]]);
-                    totalDist += prevDist[curr] || 0;
-                    curr = prevNode[curr];
+                    totalDist += pDist[curr]; curr = prev[curr];
                 }
                 return { coords, totalDist };
             }
@@ -307,17 +223,11 @@
 
         const worker = new Worker(URL.createObjectURL(workerBlob));
         let map, routeLayer, startMarker, endMarker, deptLayer;
-        let points = { start: null, end: null };
-        
-        let currentMode = 'SELECT';
-        let selectedDepts = new Set();
+        let points = { start: null, end: null }, selectedDepts = new Set(), currentMode = 'SELECT';
 
         window.onload = () => {
             map = L.map('map', { zoomControl: false }).setView([46.5, 2.5], 6);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                attribution: '© OpenStreetMap | © CartoDB',
-                maxZoom: 19
-            }).addTo(map);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { attribution: '© OSM | © CartoDB', maxZoom: 19 }).addTo(map);
             L.control.zoom({ position: 'bottomright' }).addTo(map);
 
             document.getElementById('loadBtn').onclick = loadData;
@@ -329,157 +239,114 @@
                 if (type === 'READY') {
                     currentMode = 'ROUTE';
                     document.getElementById('pingSelect').classList.add('hidden');
-                    document.getElementById('instructionText').innerText = "Mode Routage : Cliquez pour placer vos points";
-                    
-                    updateStatus('Moteur opérationnel', false, 100);
-                    document.getElementById('statsDetail').innerHTML = `Graphe compressé généré :<br><span class="text-emerald-400 font-bold text-sm">${nodes.toLocaleString()}</span> carrefours et <span class="text-emerald-400 font-bold text-sm">${edges.toLocaleString()}</span> segments en RAM.`;
-                    setTimeout(() => { if(currentMode === 'ROUTE') document.getElementById('statusBox').classList.add('hidden'); }, 4000);
-                } else if (type === 'RESULT') {
-                    showRoute(path, time);
-                }
+                    document.getElementById('instructionText').innerText = "Placer départ/arrivée";
+                    updateStatus('Prêt', false, 100);
+                    document.getElementById('statsDetail').innerHTML = `Graphe compilé : <b>${nodes.toLocaleString()}</b> nœuds et <b>${edges.toLocaleString()}</b> routes.`;
+                } else if (type === 'RESULT') showRoute(path, time);
             };
-
-            loadDepartmentsGeoJSON();
+            loadDepts();
         };
 
-        async function loadDepartmentsGeoJSON() {
-            try {
-                const res = await fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson');
-                const data = await res.json();
-                
-                deptLayer = L.geoJSON(data, {
-                    style: { color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' },
-                    onEachFeature: (feature, layer) => {
-                        const code = feature.properties.code;
-                        layer.on('mouseover', () => {
-                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981' });
-                        });
-                        layer.on('mouseout', () => {
-                            if (currentMode === 'SELECT' && !selectedDepts.has(code)) layer.setStyle({ fillOpacity: 0.1, fillColor: '#64748b' });
-                        });
-                        layer.on('click', () => {
-                            if (currentMode !== 'SELECT') return;
-                            if (selectedDepts.has(code)) {
-                                selectedDepts.delete(code);
-                                layer.setStyle({ fillOpacity: 0.3, fillColor: '#10b981', weight: 1, color: '#475569' });
-                            } else {
-                                selectedDepts.add(code);
-                                layer.setStyle({ fillOpacity: 0.5, fillColor: '#10b981', weight: 2, color: '#047857' });
-                            }
-                            document.getElementById('selCount').innerText = selectedDepts.size;
-                        });
-                    }
-                }).addTo(map);
-            } catch(e) { console.error("Erreur GeoJSON", e); }
+        async function loadDepts() {
+            const res = await fetch('https://raw.githubusercontent.com/gregoiredavid/france-geojson/master/departements-version-simplifiee.geojson');
+            const data = await res.json();
+            deptLayer = L.geoJSON(data, {
+                style: { color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' },
+                onEachFeature: (f, l) => {
+                    l.on('click', () => {
+                        if (currentMode !== 'SELECT') return;
+                        const c = f.properties.code;
+                        if (selectedDepts.has(c)) { selectedDepts.delete(c); l.setStyle({ fillOpacity: 0.1, weight: 1 }); }
+                        else { selectedDepts.add(c); l.setStyle({ fillOpacity: 0.5, fillColor: '#10b981', weight: 2 }); }
+                        document.getElementById('selCount').innerText = selectedDepts.size;
+                    });
+                }
+            }).addTo(map);
         }
 
         async function loadData() {
             if (selectedDepts.size === 0) return;
-
             currentMode = 'LOADING';
-            document.getElementById('loadBtn').disabled = true;
             document.getElementById('loadBtn').classList.add('hidden');
             document.getElementById('resetZoneBtn').classList.remove('hidden');
-
             worker.postMessage({ type: 'BUILD_START' });
 
-            const features = deptLayer.getLayers().filter(l => selectedDepts.has(l.feature.properties.code));
-            let total = features.length;
-            let current = 0;
-
-            const group = new L.featureGroup(features);
-            map.fitBounds(group.getBounds(), { padding: [20, 20] });
+            const layers = deptLayer.getLayers().filter(l => selectedDepts.has(l.feature.properties.code));
+            map.fitBounds(new L.featureGroup(layers).getBounds(), { padding: [20, 20] });
             deptLayer.setStyle({ opacity: 0, fillOpacity: 0 });
 
-            for (const layer of features) {
-                current++;
-                const b = layer.getBounds();
-                const bbox = `${b.getSouth()},${b.getWest()},${b.getNorth()},${b.getEast()}`;
-                const depName = layer.feature.properties.nom;
-                const baseProgress = ((current - 1) / total) * 100;
-                
-                updateStatus(`Extraction ${current}/${total}`, true, baseProgress);
-                document.getElementById('statsDetail').innerText = `Requête API pour : ${depName}...`;
+            // On génère la liste des "Tuiles" (subdivision de chaque département en 4)
+            let tiles = [];
+            layers.forEach(l => {
+                const b = l.getBounds();
+                const midLat = (b.getSouth() + b.getNorth()) / 2;
+                const midLon = (b.getWest() + b.getEast()) / 2;
+                const name = l.feature.properties.nom;
+                tiles.push(
+                    { name: name + " (SO)", bbox: `${b.getSouth()},${b.getWest()},${midLat},${midLon}` },
+                    { name: name + " (SE)", bbox: `${b.getSouth()},${midLon},${midLat},${b.getEast()}` },
+                    { name: name + " (NO)", bbox: `${midLat},${b.getWest()},${b.getNorth()},${midLon}` },
+                    { name: name + " (NE)", bbox: `${midLat},${midLon},${b.getNorth()},${b.getEast()}` }
+                );
+            });
 
-                // [maxsize:1073741824] évite que l'API Overpass ne coupe pour "Memory Exhausted" sur de très grosses requêtes
-                const query = `[out:json][timeout:180][maxsize:1073741824];
-                    way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|pedestrian|track"](${bbox});
-                    out geom;`;
-                
-                try {
-                    const res = await fetch('https://overpass-api.de/api/interpreter', {
-                        method: 'POST',
-                        body: `data=${encodeURIComponent(query)}`
-                    });
-                    
-                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                    
-                    const data = await res.json();
-                    
-                    updateStatus(`Intégration ${current}/${total}`, true, baseProgress + (50/total));
-                    document.getElementById('statsDetail').innerText = `Compression Typed-Array de ${data.elements.length} segments...`;
-                    
-                    worker.postMessage({ type: 'BUILD_CHUNK', data: data.elements });
-                    
-                    // On force le nettoyage du JSON reçu pour éviter que le thread principal ne sature
-                    data.elements = null; 
+            for (let i = 0; i < tiles.length; i++) {
+                const t = tiles[i];
+                const progress = (i / tiles.length) * 100;
+                updateStatus(`Chargement ${i+1}/${tiles.length}`, true, progress);
+                document.getElementById('statsDetail').innerText = `Tuile : ${t.name}...`;
 
-                    if (current < total) {
-                        updateStatus(`Pause Serveur`, true, baseProgress + (100/total));
-                        document.getElementById('statsDetail').innerText = `Pause de refroidissement Overpass API...`;
-                        await new Promise(r => setTimeout(r, 2000));
+                let success = false;
+                let retries = 0;
+
+                while (!success && retries < 3) {
+                    try {
+                        const res = await fetch('https://overpass-api.de/api/interpreter', {
+                            method: 'POST',
+                            body: `data=${encodeURIComponent(`[out:json][timeout:90][maxsize:536870912];way["highway"~"primary|secondary|tertiary|unclassified|residential|living_street|cycleway|path|track"](${t.bbox});out geom;`)}`
+                        });
+                        if (!res.ok) throw new Error();
+                        const data = await res.json();
+                        worker.postMessage({ type: 'BUILD_CHUNK', data: data.elements });
+                        success = true;
+                    } catch (e) {
+                        retries++;
+                        document.getElementById('statsDetail').innerText = `Échec tuile ${t.name}. Nouvelle tentative (${retries}/3)...`;
+                        await new Promise(r => setTimeout(r, 3000));
                     }
-
-                } catch (err) {
-                    console.error(err);
-                    updateStatus('Erreur API', false, baseProgress);
-                    document.getElementById('statsDetail').innerHTML = `<span class='text-red-400 font-bold'>Échec sur ${depName}.</span> Le serveur public Overpass est surchargé.`;
-                    return; 
                 }
+                // Pause de sécurité entre les tuiles
+                await new Promise(r => setTimeout(r, 1500));
             }
 
-            updateStatus('Finalisation...', true, 95);
-            document.getElementById('statsDetail').innerText = "Libération de la mémoire et préparation Dijkstra...";
+            updateStatus('Finalisation', true, 98);
             worker.postMessage({ type: 'BUILD_FINISH' });
         }
 
         function handleMapClick(e) {
             if (currentMode !== 'ROUTE') return;
-
             if (!points.start) {
                 points.start = e.latlng;
-                startMarker = L.circleMarker(e.latlng, { color: '#10b981', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
+                startMarker = L.circleMarker(e.latlng, { color: '#fff', fillColor: '#10b981', radius: 8, fillOpacity: 1, weight: 2 }).addTo(map);
             } else if (!points.end) {
                 points.end = e.latlng;
-                endMarker = L.circleMarker(e.latlng, { color: '#ef4444', radius: 8, fillOpacity: 1, weight: 2, color: '#fff' }).addTo(map);
-                
-                updateStatus('Calcul Dijkstra...', true, 80);
-                document.getElementById('statsDetail').innerText = "Recherche du parcours optimal dans les Typed Arrays...";
+                endMarker = L.circleMarker(e.latlng, { color: '#fff', fillColor: '#ef4444', radius: 8, fillOpacity: 1, weight: 2 }).addTo(map);
+                updateStatus('Calcul...', true, 50);
                 worker.postMessage({ type: 'ROUTE', data: { start: points.start, end: points.end } });
-            } else {
-                resetPoints();
-                handleMapClick(e);
-            }
+            } else { resetPoints(); handleMapClick(e); }
         }
 
         function showRoute(path, time) {
             if (routeLayer) map.removeLayer(routeLayer);
-            
             if (!path || path.coords.length === 0) {
+                updateStatus('Échec', false, 0);
+                document.getElementById('statsDetail').innerText = "Aucun chemin trouvé entre ces deux points.";
                 resetPoints();
-                updateStatus('Échec du Routage', false, 0);
-                document.getElementById('statsDetail').innerHTML = '<span class="text-red-400 font-bold">Zone isolée.</span> Impossible de relier ces points.';
-                setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 5000);
                 return;
             }
-
-            updateStatus('Itinéraire trouvé', false, 100);
-            document.getElementById('statsDetail').innerText = `Calcul ultra-rapide réussi.`;
-            setTimeout(() => document.getElementById('statusBox').classList.add('hidden'), 2000);
-
-            routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 5, opacity: 1, lineJoin: 'round' }).addTo(map);
+            document.getElementById('statusBox').classList.add('hidden');
+            routeLayer = L.polyline(path.coords, { color: '#10b981', weight: 6, opacity: 0.9 }).addTo(map);
             map.fitBounds(routeLayer.getBounds(), { padding: [40, 40] });
-
             document.getElementById('routeInfo').classList.remove('hidden');
             document.getElementById('txtDist').innerText = path.totalDist.toFixed(1);
             document.getElementById('txtTime').innerText = time;
@@ -487,39 +354,30 @@
 
         function resetPoints() {
             points = { start: null, end: null };
-            if (startMarker) map.removeLayer(startMarker);
-            if (endMarker) map.removeLayer(endMarker);
-            if (routeLayer) map.removeLayer(routeLayer);
+            if (startMarker) map.removeLayer(startMarker); if (endMarker) map.removeLayer(endMarker); if (routeLayer) map.removeLayer(routeLayer);
             document.getElementById('routeInfo').classList.add('hidden');
         }
 
         function resetFullZone() {
-            resetPoints();
+            resetPoints(); selectedDepts.clear();
+            document.getElementById('selCount').innerText = "0";
             document.getElementById('statusBox').classList.add('hidden');
             document.getElementById('resetZoneBtn').classList.add('hidden');
             document.getElementById('loadBtn').classList.remove('hidden');
-            document.getElementById('loadBtn').disabled = false;
-            
+            document.getElementById('instructionText').innerText = "Sélectionnez vos zones";
             document.getElementById('pingSelect').classList.remove('hidden');
-            document.getElementById('instructionText').innerText = "Sélectionnez vos départements";
-            
-            selectedDepts.clear();
-            document.getElementById('selCount').innerText = "0";
-            
-            deptLayer.setStyle({ opacity: 1, color: '#475569', weight: 1, fillOpacity: 0.1, fillColor: '#64748b' });
-            map.setView([46.5, 2.5], 6);
-            
+            deptLayer.setStyle({ opacity: 1, fillOpacity: 0.1, fillColor: '#64748b' });
             currentMode = 'SELECT';
         }
 
-        function updateStatus(label, loading, progress = 0) {
+        function updateStatus(l, loading, p = 0) {
             document.getElementById('statusBox').classList.remove('hidden');
-            document.getElementById('statusLabel').innerText = label;
+            document.getElementById('statusLabel').innerText = l;
             document.getElementById('loader').style.display = loading ? 'block' : 'none';
-            document.getElementById('progressBar').style.width = progress + '%';
+            document.getElementById('progressBar').style.width = p + '%';
         }
     </script>
 </body>
 </html>
 
-
+```
